@@ -14,13 +14,17 @@ const STROKE_COLORS = [
 
 type DrawingCanvasProps = {
 	clearSignal: number;
+	onStrokesChange: (strokes: Stroke[]) => void;
 };
 
 function getNextStrokeColor(currentIndex: number) {
 	return STROKE_COLORS[(currentIndex + 1) % STROKE_COLORS.length];
 }
 
-export function DrawingCanvas({ clearSignal }: DrawingCanvasProps) {
+export function DrawingCanvas({
+	clearSignal,
+	onStrokesChange,
+}: DrawingCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const isDrawingRef = useRef(false);
 	const previousPointRef = useRef<Point | null>(null);
@@ -122,6 +126,8 @@ export function DrawingCanvas({ clearSignal }: DrawingCanvasProps) {
 				color: currentStrokeColorRef.current,
 				points: currentStrokePointsRef.current,
 			});
+
+			emitStrokesChange();
 		}
 
 		isDrawingRef.current = false;
@@ -184,6 +190,15 @@ export function DrawingCanvas({ clearSignal }: DrawingCanvasProps) {
 		currentStrokePointsRef.current = [];
 		previousPointRef.current = null;
 		isDrawingRef.current = false;
+	}
+
+	function emitStrokesChange() {
+		onStrokesChange(
+			strokesRef.current.map(stroke => ({
+				color: stroke.color,
+				points: [...stroke.points],
+			})),
+		);
 	}
 
 	useEffect(() => {

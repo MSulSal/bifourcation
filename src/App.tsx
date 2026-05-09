@@ -1,8 +1,15 @@
 import { useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
+import type { Stroke } from "./types/geometry";
 
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
+	const [strokes, setStrokes] = useState<Stroke[]>([]);
+
+	const pointCount = strokes.reduce(
+		(total, stroke) => total + stroke.points.length,
+		0,
+	);
 
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -23,7 +30,10 @@ function App() {
 				</header>
 
 				<section className="min-h-0 flex-1 bg-zinc-900">
-					<DrawingCanvas clearSignal={clearSignal} />
+					<DrawingCanvas
+						clearSignal={clearSignal}
+						onStrokesChange={setStrokes}
+					/>
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
@@ -34,13 +44,18 @@ function App() {
 
 						<button
 							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
-							onClick={() => setClearSignal(value => value + 1)}
+							onClick={() => {
+								setClearSignal(value => value + 1);
+								setStrokes([]);
+							}}
 						>
 							Clear canvas
 						</button>
 
 						<div className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
-							Canvas ready
+							{strokes.length === 0
+								? "Canvas ready"
+								: `${strokes.length} stroke${strokes.length === 1 ? "" : "s"} · ${pointCount} points`}
 						</div>
 
 						<div className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
