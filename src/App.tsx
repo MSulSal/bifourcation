@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 
 function App() {
+	const [clearSignal, setClearSignal] = useState(0);
+
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
@@ -20,7 +23,7 @@ function App() {
 				</header>
 
 				<section className="min-h-0 flex-1 bg-zinc-900">
-					<DrawingCanvas />
+					<DrawingCanvas clearSignal={clearSignal} />
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
@@ -29,7 +32,10 @@ function App() {
 							Start drawing
 						</button>
 
-						<button className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800">
+						<button
+							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
+							onClick={() => setClearSignal(value => value + 1)}
+						>
 							Clear canvas
 						</button>
 
