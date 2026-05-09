@@ -1,3 +1,5 @@
+import { DrawingCanvas } from "./components/DrawingCanvas";
+
 function App() {
 	return (
 		<main className="flex h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -46,19 +48,7 @@ function App() {
 					</aside>
 
 					<section className="relative min-h-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
-						<div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:32px_32px]" />
-
-						<div className="relative flex h-full items-center justify-center">
-							<div className="max-w-lg text-center">
-								<p className="text-5xl font-semibold tracking-tight text-zinc-50">
-									Canvas coming next.
-								</p>
-								<p className="mt-4 text-base leading-7 text-zinc-400">
-									This panel will become the drawing surface,
-									then the epicycle animation stage.
-								</p>
-							</div>
-						</div>
+						<DrawingCanvas />
 					</section>
 				</div>
 			</section>
