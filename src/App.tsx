@@ -2,6 +2,10 @@ import { useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import type { Stroke } from "./types/geometry";
 import { resamplePath } from "./math/path";
+import { computeFourierTerms } from "./math/fourier";
+// import { algebraAxiomsHold } from "./math/clifford";
+
+// console.log(algebraAxiomsHold());
 
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
@@ -18,6 +22,11 @@ function App() {
 	const resampledPath = latestStroke
 		? resamplePath(latestStroke.points, resampledPointCount)
 		: [];
+
+	const fourierTerms =
+		resampledPath.length > 0 ? computeFourierTerms(resampledPath) : [];
+
+	const largestTerm = fourierTerms[0];
 
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -74,6 +83,12 @@ function App() {
 
 						<div className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
 							Draw one continuous path
+						</div>
+
+						<div className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
+							{fourierTerms.length === 0
+								? "No Fourier terms"
+								: `${fourierTerms.length} Fourier terms · largest radius ${largestTerm.amplitude.toFixed(1)}`}
 						</div>
 					</div>
 				</aside>
