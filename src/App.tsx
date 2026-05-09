@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import type { Stroke } from "./types/geometry";
+import { resamplePath } from "./math/path";
 
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
@@ -10,6 +11,13 @@ function App() {
 		(total, stroke) => total + stroke.points.length,
 		0,
 	);
+
+	const latestStroke = strokes.at(-1);
+	const resampledPointCount = 256;
+
+	const resampledPath = latestStroke
+		? resamplePath(latestStroke.points, resampledPointCount)
+		: [];
 
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -56,6 +64,12 @@ function App() {
 							{strokes.length === 0
 								? "Canvas ready"
 								: `${strokes.length} stroke${strokes.length === 1 ? "" : "s"} · ${pointCount} points`}
+						</div>
+
+						<div className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
+							{resampledPath.length === 0
+								? "No Fourier path yet"
+								: `${resampledPath.length} resampled points`}
 						</div>
 
 						<div className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
