@@ -47,7 +47,7 @@ export function DrawingCanvas() {
 		if (!ctx) return;
 
 		ctx.strokeStyle = currentStrokeColorRef.current;
-		ctx.lineWidth = 5;
+		ctx.lineWidth = 4;
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
 
@@ -102,7 +102,13 @@ export function DrawingCanvas() {
 		previousPointRef.current = currentPoint;
 	}
 
-	function stopDrawing() {
+	function stopDrawing(event?: PointerEvent<HTMLCanvasElement>) {
+		const canvas = canvasRef.current;
+
+		if (canvas && event && canvas.hasPointerCapture(event.pointerId)) {
+			canvas.releasePointerCapture(event.pointerId);
+		}
+
 		isDrawingRef.current = false;
 		previousPointRef.current = null;
 	}
@@ -128,27 +134,47 @@ export function DrawingCanvas() {
 		setPointerPreview(null);
 	}
 
-	useEffect(() => {
+	function resizeCanvasToDisplaySize() {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 
 		const rect = canvas.getBoundingClientRect();
+		const dpr = window.devicePixelRatio || 1;
 
-		canvas.width = rect.width;
-		canvas.height = rect.height;
+		canvas.width = Math.round(rect.width * dpr);
+		canvas.height = Math.round(rect.height * dpr);
 
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
 
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
 		ctx.fillStyle = "#18181b";
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		ctx.fillRect(0, 0, rect.width, rect.height);
+	}
+
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		resizeCanvasToDisplaySize();
+
+		const resizeObserver = new ResizeObserver(() => {
+			resizeCanvasToDisplaySize();
+		});
+
+		resizeObserver.observe(canvas);
+
+		return () => {
+			resizeObserver.disconnect();
+		};
 	}, []);
 
 	return (
 		<div className="relative h-full w-full">
 			<canvas
 				ref={canvasRef}
-				className="h-full w-full touch-none"
+				className="block h-full w-full touch-none select-none cursor-none"
 				onPointerDown={handlePointerDown}
 				onPointerUp={stopDrawing}
 				onPointerCancel={stopDrawing}
