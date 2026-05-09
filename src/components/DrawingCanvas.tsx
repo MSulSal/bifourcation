@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { Point } from "../types/geometry";
 
 const STROKE_COLORS = [
@@ -12,12 +12,20 @@ const STROKE_COLORS = [
 	"#eb5757", // coral
 ];
 
+function getNextStrokeColor(currentIndex: number) {
+	return STROKE_COLORS[(currentIndex + 1) % STROKE_COLORS.length];
+}
+
 export function DrawingCanvas() {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const isDrawingRef = useRef(false);
 	const previousPointRef = useRef<Point | null>(null);
 	const strokeColorIndexRef = useRef(-1);
 	const currentStrokeColorRef = useRef(STROKE_COLORS[0]);
+	const [pointerPreview, setPointerPreview] = useState<{
+		point: Point;
+		color: string;
+	} | null>(null);
 
 	function getCanvasPoint(event: PointerEvent): Point {
 		const canvas = canvasRef.current;
@@ -60,14 +68,29 @@ export function DrawingCanvas() {
 
 		currentStrokeColorRef.current =
 			STROKE_COLORS[strokeColorIndexRef.current];
+
+		const point = getCanvasPoint(event);
+
 		isDrawingRef.current = true;
-		previousPointRef.current = getCanvasPoint(event);
+		previousPointRef.current = point;
+
+		setPointerPreview({
+			point,
+			color: currentStrokeColorRef.current,
+		});
 	}
 
 	function handlePointerMove(event: PointerEvent<HTMLCanvasElement>) {
-		if (!isDrawingRef.current) return;
+		if (!isDrawingRef.current) {
+			handlePointerHover(event);
+			return;
+		}
 
 		const currentPoint = getCanvasPoint(event);
+		setPointerPreview({
+			point: currentPoint,
+			color: currentStrokeColorRef.current,
+		});
 		const previousPoint = previousPointRef.current;
 
 		if (!previousPoint) {
@@ -82,6 +105,27 @@ export function DrawingCanvas() {
 	function stopDrawing() {
 		isDrawingRef.current = false;
 		previousPointRef.current = null;
+	}
+
+	function handlePointerHover(event: PointerEvent<HTMLCanvasElement>) {
+		if (isDrawingRef.current) return;
+
+		setPointerPreview({
+			point: getCanvasPoint(event),
+			color: getNextStrokeColor(strokeColorIndexRef.current),
+		});
+	}
+
+	function handlePointerEnter(event: PointerEvent<HTMLCanvasElement>) {
+		setPointerPreview({
+			point: getCanvasPoint(event),
+			color: getNextStrokeColor(strokeColorIndexRef.current),
+		});
+	}
+
+	function handlePointerLeave() {
+		if (isDrawingRef.current) return;
+		setPointerPreview(null);
 	}
 
 	useEffect(() => {
@@ -101,13 +145,30 @@ export function DrawingCanvas() {
 	}, []);
 
 	return (
-		<canvas
-			ref={canvasRef}
-			className="h-full w-full touch-none"
-			onPointerDown={handlePointerDown}
-			onPointerMove={handlePointerMove}
-			onPointerUp={stopDrawing}
-			onPointerCancel={stopDrawing}
-		/>
+		<div className="relative h-full w-full">
+			<canvas
+				ref={canvasRef}
+				className="h-full w-full touch-none"
+				onPointerDown={handlePointerDown}
+				onPointerUp={stopDrawing}
+				onPointerCancel={stopDrawing}
+				onPointerEnter={handlePointerEnter}
+				onPointerMove={handlePointerMove}
+				onPointerLeave={handlePointerLeave}
+			/>
+
+			{pointerPreview && (
+				<div
+					className="pointer-events-none absolute h-6 w-6 rounded-full border"
+					style={{
+						left: pointerPreview.point.x,
+						top: pointerPreview.point.y,
+						transform: "translate(-50%, -50%)",
+						borderColor: pointerPreview.color,
+						backgroundColor: `${pointerPreview.color}33`,
+					}}
+				/>
+			)}
+		</div>
 	);
 }
