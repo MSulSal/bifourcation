@@ -570,7 +570,6 @@ export function EpicycleCanvas({
 
 		const vectorAlpha = Math.max(0.2, 0.72 - index * 0.006) * opacity;
 		const companionAlpha = Math.max(0.12, 0.42 - index * 0.004) * opacity;
-		const bridgeAlpha = Math.max(0.04, 0.18 - index * 0.0025) * opacity;
 
 		drawLine(
 			center,
@@ -587,15 +586,6 @@ export function EpicycleCanvas({
 			Math.max(1, strokeWidth * 0.32),
 			companionAlpha,
 			isNegativeFrequency ? [6, 5] : [],
-		);
-
-		drawLine(
-			tip,
-			companionTip,
-			color,
-			1,
-			bridgeAlpha,
-			isNegativeFrequency ? [4, 5] : [],
 		);
 
 		if (index >= MAX_ARROWED_COMPONENTS) return;
