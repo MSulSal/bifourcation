@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { EpicycleCanvas } from "./components/EpicycleCanvas";
 import { computeFourierTerms } from "./math/fourier";
@@ -34,24 +34,39 @@ function App() {
 	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
 	const [penWidth, setPenWidth] = useState(4);
 
+	const resampledPointCount = 256;
+	const visibleTermCount = 80;
+
 	const pointCount = strokes.reduce(
 		(total, stroke) => total + stroke.points.length,
 		0,
 	);
 
-	const latestStroke =
-		strokes.length > 0 ? strokes[strokes.length - 1] : undefined;
+	const animatedStrokes = useMemo(
+		() =>
+			strokes.map((stroke, index) => {
+				const path = resamplePath(stroke.points, resampledPointCount);
+				const terms = path.length > 0 ? computeFourierTerms(path) : [];
 
-	const resampledPointCount = 256;
+				return {
+					id: `${index}-${stroke.color}-${stroke.width}-${stroke.points.length}`,
+					color: stroke.color,
+					width: stroke.width,
+					path,
+					terms,
+				};
+			}),
+		[strokes],
+	);
 
-	const resampledPath = latestStroke
-		? resamplePath(latestStroke.points, resampledPointCount)
-		: [];
+	const hasAnimationData = animatedStrokes.some(
+		stroke => stroke.terms.length > 0,
+	);
 
-	const fourierTerms =
-		resampledPath.length > 0 ? computeFourierTerms(resampledPath) : [];
-
-	const visibleTermCount = Math.min(80, fourierTerms.length);
+	const totalFourierTerms = animatedStrokes.reduce(
+		(total, stroke) => total + stroke.terms.length,
+		0,
+	);
 
 	const isAnimationMode = mode === "animate";
 	const isCanvasInteractive = mode === "draw";
@@ -69,7 +84,7 @@ function App() {
 	}
 
 	function toggleAnimation() {
-		if (fourierTerms.length === 0) return;
+		if (!hasAnimationData) return;
 
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
@@ -112,7 +127,8 @@ function App() {
 					</div>
 
 					<EpicycleCanvas
-						terms={fourierTerms}
+						strokes={animatedStrokes}
+						isActive={isAnimationMode}
 						isPlaying={isAnimationPlaying}
 						termLimit={visibleTermCount}
 					/>
@@ -234,15 +250,19 @@ function App() {
 									<p>{pointCount} raw points</p>
 
 									<p>
-										{resampledPath.length === 0
-											? "No resampled path"
-											: `${resampledPath.length} resampled points`}
+										{animatedStrokes.length === 0
+											? "No resampled paths"
+											: `${animatedStrokes.length} resampled path${
+													animatedStrokes.length === 1
+														? ""
+														: "s"
+												}`}
 									</p>
 
 									<p>
-										{fourierTerms.length === 0
+										{totalFourierTerms === 0
 											? "No Fourier terms"
-											: `${fourierTerms.length} Fourier terms`}
+											: `${totalFourierTerms} Fourier terms`}
 									</p>
 								</div>
 							</section>
@@ -269,7 +289,7 @@ function App() {
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
-							disabled={fourierTerms.length === 0}
+							disabled={!hasAnimationData}
 							onClick={toggleAnimation}
 						>
 							{isAnimationPlaying ? "Pause" : "Animate"}
