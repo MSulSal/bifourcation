@@ -16,10 +16,17 @@ const PEN_COLORS = [
 	"#eb5757",
 ];
 
+const ACTIVE_BUTTON_CLASS =
+	"shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400";
+
+const INACTIVE_BUTTON_CLASS =
+	"shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
+
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
 	const [isAnimating, setIsAnimating] = useState(false);
+	const [isDrawingMode, setIsDrawingMode] = useState(true);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
 	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
@@ -46,9 +53,24 @@ function App() {
 
 	function clearEverything() {
 		setIsAnimating(false);
+		setIsDrawingMode(true);
 		setClearSignal(value => value + 1);
 		setStrokes([]);
 	}
+
+	function enterDrawMode() {
+		setIsAnimating(false);
+		setIsDrawingMode(true);
+	}
+
+	function toggleAnimation() {
+		if (fourierTerms.length === 0) return;
+
+		setIsDrawingMode(false);
+		setIsAnimating(value => !value);
+	}
+
+	const isCanvasInteractive = isDrawingMode && !isAnimating;
 
 	return (
 		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -72,9 +94,10 @@ function App() {
 					<div
 						className={[
 							"h-full w-full transition-opacity duration-200",
-							isAnimating
-								? "pointer-events-none opacity-20"
-								: "pointer-events-auto opacity-100",
+							isAnimating ? "opacity-20" : "opacity-100",
+							isCanvasInteractive
+								? "pointer-events-auto"
+								: "pointer-events-none",
 						].join(" ")}
 					>
 						<DrawingCanvas
@@ -216,22 +239,30 @@ function App() {
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
 					<div className="flex items-center justify-center gap-3 overflow-x-auto">
 						<button
-							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
-							onClick={() => setIsAnimating(false)}
+							className={
+								isDrawingMode && !isAnimating
+									? ACTIVE_BUTTON_CLASS
+									: INACTIVE_BUTTON_CLASS
+							}
+							onClick={enterDrawMode}
 						>
-							{isAnimating ? "Pause" : "Draw"}
+							Draw
 						</button>
 
 						<button
-							className="shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-							disabled={fourierTerms.length === 0 || isAnimating}
-							onClick={() => setIsAnimating(true)}
+							className={
+								isAnimating
+									? ACTIVE_BUTTON_CLASS
+									: INACTIVE_BUTTON_CLASS
+							}
+							disabled={fourierTerms.length === 0}
+							onClick={toggleAnimation}
 						>
-							Animate
+							{isAnimating ? "Pause" : "Animate"}
 						</button>
 
 						<button
-							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
+							className={INACTIVE_BUTTON_CLASS}
 							onClick={clearEverything}
 						>
 							Clear canvas
