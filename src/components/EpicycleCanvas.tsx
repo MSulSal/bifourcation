@@ -216,39 +216,28 @@ export function EpicycleCanvas({
 		if (!ctx) return;
 
 		// Accurate blade geometry:
-		// component vector r has length |r|.
-		// companion vector e₁e₂r has the same length |r|.
-		// The parallelogram area is therefore |r|².
+		//
+		// r is the component vector:
+		//   center → tip
+		//
+		// e₁e₂r is the companion vector:
+		//   center → companionTip
+		//
+		// The blade is the parallelogram spanned by those two edge vectors.
+		// Its area is |r|² because |e₁e₂r| = |r| and the two are perpendicular.
 		const companionVector = {
 			x: companionUnit.x * length,
 			y: companionUnit.y * length,
 		};
 
-		const halfOffset = {
-			x: companionVector.x * 0.5,
-			y: companionVector.y * 0.5,
+		const companionTip = {
+			x: center.x + companionVector.x,
+			y: center.y + companionVector.y,
 		};
 
-		// This parallelogram is translated so the component vector remains visually
-		// centered, but its spanning vectors are still r and e₁e₂r.
-		const p0 = {
-			x: center.x - halfOffset.x,
-			y: center.y - halfOffset.y,
-		};
-
-		const p1 = {
-			x: tip.x - halfOffset.x,
-			y: tip.y - halfOffset.y,
-		};
-
-		const p2 = {
-			x: tip.x + halfOffset.x,
-			y: tip.y + halfOffset.y,
-		};
-
-		const p3 = {
-			x: center.x + halfOffset.x,
-			y: center.y + halfOffset.y,
+		const farCorner = {
+			x: tip.x + companionVector.x,
+			y: tip.y + companionVector.y,
 		};
 
 		const bladeAlpha = Math.max(0.012, 0.075 - index * 0.001) * opacity;
@@ -260,10 +249,10 @@ export function EpicycleCanvas({
 		ctx.fillStyle = color;
 
 		ctx.beginPath();
-		ctx.moveTo(p0.x, p0.y);
-		ctx.lineTo(p1.x, p1.y);
-		ctx.lineTo(p2.x, p2.y);
-		ctx.lineTo(p3.x, p3.y);
+		ctx.moveTo(center.x, center.y);
+		ctx.lineTo(tip.x, tip.y);
+		ctx.lineTo(farCorner.x, farCorner.y);
+		ctx.lineTo(companionTip.x, companionTip.y);
 		ctx.closePath();
 		ctx.fill();
 
@@ -272,35 +261,43 @@ export function EpicycleCanvas({
 		ctx.lineWidth = 1;
 
 		ctx.beginPath();
-		ctx.moveTo(p0.x, p0.y);
-		ctx.lineTo(p1.x, p1.y);
-		ctx.lineTo(p2.x, p2.y);
-		ctx.lineTo(p3.x, p3.y);
+		ctx.moveTo(center.x, center.y);
+		ctx.lineTo(tip.x, tip.y);
+		ctx.lineTo(farCorner.x, farCorner.y);
+		ctx.lineTo(companionTip.x, companionTip.y);
 		ctx.closePath();
 		ctx.stroke();
 
 		ctx.globalAlpha = 1;
 
+		// Primary edge: r.
 		drawLine(
 			center,
 			tip,
 			color,
-			Math.max(1, strokeWidth * 0.4),
+			Math.max(1, strokeWidth * 0.44),
 			vectorAlpha,
 		);
 
-		const companionTip = {
-			x: center.x + companionVector.x,
-			y: center.y + companionVector.y,
-		};
-
+		// Companion edge: e₁e₂r.
 		drawLine(
 			center,
 			companionTip,
 			color,
-			Math.max(1, strokeWidth * 0.28),
+			Math.max(1, strokeWidth * 0.34),
 			companionAlpha,
 		);
+
+		// Opposite edges, faintly, so the parallelogram reads as a blade.
+		drawLine(
+			companionTip,
+			farCorner,
+			color,
+			1,
+			Math.max(0.04, outlineAlpha * 0.7),
+		);
+
+		drawLine(tip, farCorner, color, 1, Math.max(0.04, outlineAlpha * 0.7));
 
 		if (index >= MAX_ARROWED_COMPONENTS || frequency === 0) return;
 
@@ -309,19 +306,24 @@ export function EpicycleCanvas({
 		const arrowSize = Math.max(4, Math.min(9, length * 0.075));
 		const arrowAlpha = Math.max(0.12, 0.5 - index * 0.016) * opacity;
 
-		const topEdgeMidpoint = {
-			x: (p2.x + p3.x) * 0.5,
-			y: (p2.y + p3.y) * 0.5,
+		const primaryEdgeMidpoint = {
+			x: (center.x + tip.x) * 0.5,
+			y: (center.y + tip.y) * 0.5,
 		};
 
-		const bottomEdgeMidpoint = {
-			x: (p0.x + p1.x) * 0.5,
-			y: (p0.y + p1.y) * 0.5,
+		const companionEdgeMidpoint = {
+			x: (center.x + companionTip.x) * 0.5,
+			y: (center.y + companionTip.y) * 0.5,
+		};
+
+		const oppositePrimaryEdgeMidpoint = {
+			x: (companionTip.x + farCorner.x) * 0.5,
+			y: (companionTip.y + farCorner.y) * 0.5,
 		};
 
 		drawArrowhead(
-			topEdgeMidpoint.x,
-			topEdgeMidpoint.y,
+			primaryEdgeMidpoint.x,
+			primaryEdgeMidpoint.y,
 			componentAngle,
 			color,
 			arrowSize,
@@ -329,21 +331,21 @@ export function EpicycleCanvas({
 		);
 
 		drawArrowhead(
-			bottomEdgeMidpoint.x,
-			bottomEdgeMidpoint.y,
-			componentAngle + Math.PI,
+			companionEdgeMidpoint.x,
+			companionEdgeMidpoint.y,
+			companionAngle,
 			color,
-			arrowSize,
-			arrowAlpha,
+			arrowSize * 0.9,
+			arrowAlpha * 0.85,
 		);
 
 		drawArrowhead(
-			companionTip.x,
-			companionTip.y,
-			companionAngle,
+			oppositePrimaryEdgeMidpoint.x,
+			oppositePrimaryEdgeMidpoint.y,
+			componentAngle,
 			color,
-			arrowSize * 0.85,
-			arrowAlpha * 0.8,
+			arrowSize,
+			arrowAlpha * 0.7,
 		);
 	}
 
