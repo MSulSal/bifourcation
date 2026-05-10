@@ -22,11 +22,13 @@ const ACTIVE_BUTTON_CLASS =
 const INACTIVE_BUTTON_CLASS =
 	"shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
 
+type AppMode = "draw" | "animate";
+
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
-	const [isAnimating, setIsAnimating] = useState(false);
-	const [isDrawingMode, setIsDrawingMode] = useState(true);
+	const [mode, setMode] = useState<AppMode>("draw");
+	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
 	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
@@ -51,26 +53,27 @@ function App() {
 
 	const visibleTermCount = Math.min(80, fourierTerms.length);
 
+	const isAnimationMode = mode === "animate";
+	const isCanvasInteractive = mode === "draw";
+
 	function clearEverything() {
-		setIsAnimating(false);
-		setIsDrawingMode(true);
+		setIsAnimationPlaying(false);
+		setMode("draw");
 		setClearSignal(value => value + 1);
 		setStrokes([]);
 	}
 
 	function enterDrawMode() {
-		setIsAnimating(false);
-		setIsDrawingMode(true);
+		setIsAnimationPlaying(false);
+		setMode("draw");
 	}
 
 	function toggleAnimation() {
 		if (fourierTerms.length === 0) return;
 
-		setIsDrawingMode(false);
-		setIsAnimating(value => !value);
+		setMode("animate");
+		setIsAnimationPlaying(value => !value);
 	}
-
-	const isCanvasInteractive = isDrawingMode && !isAnimating;
 
 	return (
 		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -94,7 +97,7 @@ function App() {
 					<div
 						className={[
 							"h-full w-full transition-opacity duration-200",
-							isAnimating ? "opacity-20" : "opacity-100",
+							isAnimationMode ? "opacity-20" : "opacity-100",
 							isCanvasInteractive
 								? "pointer-events-auto"
 								: "pointer-events-none",
@@ -110,9 +113,20 @@ function App() {
 
 					<EpicycleCanvas
 						terms={fourierTerms}
-						isPlaying={isAnimating}
+						isPlaying={isAnimationPlaying}
 						termLimit={visibleTermCount}
 					/>
+
+					{isAnimationMode && !isAnimationPlaying && (
+						<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+							<div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-zinc-700/70 bg-zinc-950/60 shadow-lg backdrop-blur">
+								<div className="flex gap-2">
+									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
+									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
+								</div>
+							</div>
+						</div>
+					)}
 
 					<button
 						className="absolute right-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
@@ -240,7 +254,7 @@ function App() {
 					<div className="flex items-center justify-center gap-3 overflow-x-auto">
 						<button
 							className={
-								isDrawingMode && !isAnimating
+								mode === "draw"
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
@@ -251,14 +265,14 @@ function App() {
 
 						<button
 							className={
-								isAnimating
+								isAnimationMode
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
 							disabled={fourierTerms.length === 0}
 							onClick={toggleAnimation}
 						>
-							{isAnimating ? "Pause" : "Animate"}
+							{isAnimationPlaying ? "Pause" : "Animate"}
 						</button>
 
 						<button
