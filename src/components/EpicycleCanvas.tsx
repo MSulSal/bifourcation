@@ -106,6 +106,7 @@ export function EpicycleCanvas({
 		ctx.lineWidth = width;
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
+		ctx.setLineDash([]);
 
 		ctx.beginPath();
 		ctx.moveTo(points[0].x, points[0].y);
@@ -164,6 +165,7 @@ export function EpicycleCanvas({
 		color: string,
 		width: number,
 		alpha: number,
+		dash: number[] = [],
 	) {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
@@ -176,13 +178,106 @@ export function EpicycleCanvas({
 		ctx.lineWidth = width;
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
+		ctx.setLineDash(dash);
 
 		ctx.beginPath();
 		ctx.moveTo(from.x, from.y);
 		ctx.lineTo(to.x, to.y);
 		ctx.stroke();
 
+		ctx.setLineDash([]);
 		ctx.globalAlpha = 1;
+	}
+
+	function drawPolygonHatching(
+		points: Point[],
+		color: string,
+		alpha: number,
+		spacing = 9,
+	) {
+		const canvas = canvasRef.current;
+		if (!canvas || points.length === 0) return;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		const xs = points.map(point => point.x);
+		const ys = points.map(point => point.y);
+
+		const minX = Math.min(...xs);
+		const maxX = Math.max(...xs);
+		const minY = Math.min(...ys);
+		const maxY = Math.max(...ys);
+		const height = maxY - minY;
+		const width = maxX - minX;
+
+		ctx.save();
+
+		ctx.beginPath();
+		ctx.moveTo(points[0].x, points[0].y);
+
+		for (const point of points.slice(1)) {
+			ctx.lineTo(point.x, point.y);
+		}
+
+		ctx.closePath();
+		ctx.clip();
+
+		ctx.globalAlpha = alpha;
+		ctx.strokeStyle = color;
+		ctx.lineWidth = 1;
+		ctx.setLineDash([4, 5]);
+
+		for (
+			let x = minX - height - spacing;
+			x <= maxX + width + spacing;
+			x += spacing
+		) {
+			ctx.beginPath();
+			ctx.moveTo(x, minY - spacing);
+			ctx.lineTo(x + height + spacing * 2, maxY + spacing);
+			ctx.stroke();
+		}
+
+		ctx.restore();
+	}
+
+	function drawDiskHatching(
+		center: Point,
+		radius: number,
+		color: string,
+		alpha: number,
+		spacing = 9,
+	) {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		ctx.save();
+
+		ctx.beginPath();
+		ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+		ctx.clip();
+
+		ctx.globalAlpha = alpha;
+		ctx.strokeStyle = color;
+		ctx.lineWidth = 1;
+		ctx.setLineDash([4, 5]);
+
+		for (
+			let x = center.x - radius * 2;
+			x <= center.x + radius * 2;
+			x += spacing
+		) {
+			ctx.beginPath();
+			ctx.moveTo(x, center.y - radius - spacing);
+			ctx.lineTo(x + radius * 2, center.y + radius + spacing);
+			ctx.stroke();
+		}
+
+		ctx.restore();
 	}
 
 	function drawTranslationComponent(
@@ -215,16 +310,8 @@ export function EpicycleCanvas({
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
 
-		// Accurate blade geometry:
-		//
-		// r is the component vector:
-		//   center → tip
-		//
-		// e₁e₂r is the companion vector:
-		//   center → companionTip
-		//
-		// The blade is the parallelogram spanned by those two edge vectors.
-		// Its area is |r|² because |e₁e₂r| = |r| and the two are perpendicular.
+		const isNegativeFrequency = frequency < 0;
+
 		const companionVector = {
 			x: companionUnit.x * length,
 			y: companionUnit.y * length,
@@ -239,6 +326,8 @@ export function EpicycleCanvas({
 			x: tip.x + companionVector.x,
 			y: tip.y + companionVector.y,
 		};
+
+		const bladePoints = [center, tip, farCorner, companionTip];
 
 		const bladeAlpha = Math.max(0.012, 0.075 - index * 0.001) * opacity;
 		const outlineAlpha = Math.max(0.045, 0.24 - index * 0.0025) * opacity;
@@ -256,9 +345,18 @@ export function EpicycleCanvas({
 		ctx.closePath();
 		ctx.fill();
 
+		if (isNegativeFrequency) {
+			drawPolygonHatching(
+				bladePoints,
+				color,
+				Math.max(0.035, 0.16 - index * 0.0025) * opacity,
+			);
+		}
+
 		ctx.globalAlpha = outlineAlpha;
 		ctx.strokeStyle = color;
 		ctx.lineWidth = 1;
+		ctx.setLineDash(isNegativeFrequency ? [5, 5] : []);
 
 		ctx.beginPath();
 		ctx.moveTo(center.x, center.y);
@@ -268,9 +366,9 @@ export function EpicycleCanvas({
 		ctx.closePath();
 		ctx.stroke();
 
+		ctx.setLineDash([]);
 		ctx.globalAlpha = 1;
 
-		// Primary edge: r.
 		drawLine(
 			center,
 			tip,
@@ -279,25 +377,32 @@ export function EpicycleCanvas({
 			vectorAlpha,
 		);
 
-		// Companion edge: e₁e₂r.
 		drawLine(
 			center,
 			companionTip,
 			color,
 			Math.max(1, strokeWidth * 0.34),
 			companionAlpha,
+			isNegativeFrequency ? [5, 5] : [],
 		);
 
-		// Opposite edges, faintly, so the parallelogram reads as a blade.
 		drawLine(
 			companionTip,
 			farCorner,
 			color,
 			1,
 			Math.max(0.04, outlineAlpha * 0.7),
+			isNegativeFrequency ? [4, 5] : [],
 		);
 
-		drawLine(tip, farCorner, color, 1, Math.max(0.04, outlineAlpha * 0.7));
+		drawLine(
+			tip,
+			farCorner,
+			color,
+			1,
+			Math.max(0.04, outlineAlpha * 0.7),
+			isNegativeFrequency ? [4, 5] : [],
+		);
 
 		if (index >= MAX_ARROWED_COMPONENTS || frequency === 0) return;
 
@@ -365,13 +470,12 @@ export function EpicycleCanvas({
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
 
-		// Accurate circular blade area:
-		// blade area from r ∧ e₁e₂r is |r|².
-		// For a circular disk with the same area, πR² = |r|²,
-		// so R = |r| / √π.
+		const isNegativeFrequency = frequency < 0;
+
 		const diskRadius = length / Math.sqrt(Math.PI);
 
 		const diskAlpha = Math.max(0.018, 0.11 - index * 0.0014) * opacity;
+		const hatchAlpha = Math.max(0.035, 0.15 - index * 0.002) * opacity;
 		const outlineAlpha = Math.max(0.06, 0.28 - index * 0.003) * opacity;
 		const vectorAlpha = Math.max(0.18, 0.74 - index * 0.006) * opacity;
 
@@ -381,12 +485,18 @@ export function EpicycleCanvas({
 		ctx.arc(center.x, center.y, diskRadius, 0, Math.PI * 2);
 		ctx.fill();
 
+		if (isNegativeFrequency) {
+			drawDiskHatching(center, diskRadius, color, hatchAlpha);
+		}
+
 		ctx.globalAlpha = outlineAlpha;
 		ctx.strokeStyle = color;
 		ctx.lineWidth = 1;
+		ctx.setLineDash(isNegativeFrequency ? [5, 5] : []);
 		ctx.beginPath();
 		ctx.arc(center.x, center.y, diskRadius, 0, Math.PI * 2);
 		ctx.stroke();
+		ctx.setLineDash([]);
 
 		ctx.globalAlpha = 1;
 
@@ -443,6 +553,7 @@ export function EpicycleCanvas({
 		tip: Point,
 		companionUnit: Point,
 		length: number,
+		frequency: number,
 		color: string,
 		strokeWidth: number,
 		index: number,
@@ -450,8 +561,8 @@ export function EpicycleCanvas({
 	) {
 		if (index >= MAX_VISIBLE_COMPONENTS) return;
 
-		// Accurate companion geometry:
-		// |e₁e₂r| = |r|.
+		const isNegativeFrequency = frequency < 0;
+
 		const companionTip = {
 			x: center.x + companionUnit.x * length,
 			y: center.y + companionUnit.y * length,
@@ -475,9 +586,17 @@ export function EpicycleCanvas({
 			color,
 			Math.max(1, strokeWidth * 0.32),
 			companionAlpha,
+			isNegativeFrequency ? [6, 5] : [],
 		);
 
-		drawLine(tip, companionTip, color, 1, bridgeAlpha);
+		drawLine(
+			tip,
+			companionTip,
+			color,
+			1,
+			bridgeAlpha,
+			isNegativeFrequency ? [4, 5] : [],
+		);
 
 		if (index >= MAX_ARROWED_COMPONENTS) return;
 
@@ -578,6 +697,7 @@ export function EpicycleCanvas({
 			tip,
 			companionUnit,
 			length,
+			frequency,
 			color,
 			strokeWidth,
 			index,
