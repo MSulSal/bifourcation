@@ -68,6 +68,11 @@ function App() {
 		0,
 	);
 
+	const totalResampledPoints = animatedStrokes.reduce(
+		(total, stroke) => total + stroke.path.length,
+		0,
+	);
+
 	const isAnimationMode = mode === "animate";
 	const isCanvasInteractive = mode === "draw";
 
@@ -133,16 +138,15 @@ function App() {
 						termLimit={visibleTermCount}
 					/>
 
-					{isAnimationMode && !isAnimationPlaying && (
-						<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-							<div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-zinc-700/70 bg-zinc-950/60 shadow-lg backdrop-blur">
-								<div className="flex gap-2">
-									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
-									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
-								</div>
-							</div>
-						</div>
-					)}
+					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-wrap gap-2 text-[11px] font-medium text-zinc-100/45 sm:text-xs">
+						<span>{strokes.length} strokes</span>
+						<span>·</span>
+						<span>{pointCount} raw</span>
+						<span>·</span>
+						<span>{totalResampledPoints} sampled</span>
+						<span>·</span>
+						<span>{totalFourierTerms} terms</span>
+					</div>
 
 					<button
 						className="absolute right-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
@@ -165,7 +169,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-16 z-20 w-72 transition-all duration-200",
+							"absolute right-3 top-16 z-20 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
 							isDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -228,42 +232,6 @@ function App() {
 											backgroundColor: penColor,
 										}}
 									/>
-								</div>
-							</section>
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 text-sm text-zinc-400 shadow-lg backdrop-blur">
-								<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Path
-								</p>
-
-								<div className="mt-3 space-y-1">
-									<p>
-										{strokes.length === 0
-											? "No strokes yet"
-											: `${strokes.length} stroke${
-													strokes.length === 1
-														? ""
-														: "s"
-												}`}
-									</p>
-
-									<p>{pointCount} raw points</p>
-
-									<p>
-										{animatedStrokes.length === 0
-											? "No resampled paths"
-											: `${animatedStrokes.length} resampled path${
-													animatedStrokes.length === 1
-														? ""
-														: "s"
-												}`}
-									</p>
-
-									<p>
-										{totalFourierTerms === 0
-											? "No Fourier terms"
-											: `${totalFourierTerms} Fourier terms`}
-									</p>
 								</div>
 							</section>
 						</div>
