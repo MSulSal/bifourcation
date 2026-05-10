@@ -285,29 +285,22 @@ function App() {
 
 					{isAnimationMode && (
 						<div className="absolute bottom-3 left-3 z-30 flex overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-1 text-xs font-semibold shadow-lg backdrop-blur">
-							<button
-								className={[
-									"rounded-xl px-3 py-2 transition",
-									bivectorView === "blade"
-										? "bg-zinc-50 text-zinc-950"
-										: "text-zinc-300 hover:bg-zinc-800/80",
-								].join(" ")}
-								onClick={() => setBivectorView("blade")}
-							>
-								Blade
-							</button>
-
-							<button
-								className={[
-									"rounded-xl px-3 py-2 transition",
-									bivectorView === "companion"
-										? "bg-zinc-50 text-zinc-950"
-										: "text-zinc-300 hover:bg-zinc-800/80",
-								].join(" ")}
-								onClick={() => setBivectorView("companion")}
-							>
-								Companion
-							</button>
+							{(["blade", "disk", "companion"] as const).map(
+								view => (
+									<button
+										key={view}
+										className={[
+											"rounded-xl px-3 py-2 capitalize transition",
+											bivectorView === view
+												? "bg-zinc-50 text-zinc-950"
+												: "text-zinc-300 hover:bg-zinc-800/80",
+										].join(" ")}
+										onClick={() => setBivectorView(view)}
+									>
+										{view}
+									</button>
+								),
+							)}
 						</div>
 					)}
 
@@ -424,8 +417,9 @@ function App() {
 									</p>
 
 									<p className="text-zinc-500">
-										Blade mode shows area. Companion mode
-										shows the e₁e₂-rotated vector.
+										Blade and disk modes show oriented area.
+										Companion mode shows the e₁e₂-rotated
+										vector.
 									</p>
 								</div>
 							</section>

@@ -3,7 +3,7 @@ import type { Multivector } from "../math/clifford";
 import { evaluateFourierTerms, type FourierTerm } from "../math/fourier";
 import type { Point } from "../types/geometry";
 
-export type BivectorView = "blade" | "companion";
+export type BivectorView = "blade" | "disk" | "companion";
 
 type AnimatedStroke = {
 	id: string;
@@ -323,6 +323,89 @@ export function EpicycleCanvas({
 		);
 	}
 
+	function drawDiskMode(
+		center: Point,
+		tip: Point,
+		length: number,
+		frequency: number,
+		color: string,
+		strokeWidth: number,
+		index: number,
+		opacity: number,
+	) {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		const diskAlpha = Math.max(0.018, 0.105 - index * 0.0014) * opacity;
+		const outlineAlpha = Math.max(0.06, 0.28 - index * 0.003) * opacity;
+		const vectorAlpha = Math.max(0.18, 0.74 - index * 0.006) * opacity;
+
+		ctx.globalAlpha = diskAlpha;
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(center.x, center.y, length, 0, Math.PI * 2);
+		ctx.fill();
+
+		ctx.globalAlpha = outlineAlpha;
+		ctx.strokeStyle = color;
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.arc(center.x, center.y, length, 0, Math.PI * 2);
+		ctx.stroke();
+
+		ctx.globalAlpha = 1;
+
+		drawLine(
+			center,
+			tip,
+			color,
+			Math.max(1, strokeWidth * 0.42),
+			vectorAlpha,
+		);
+
+		if (index >= MAX_ARROWED_BLADES || frequency === 0) return;
+
+		const direction = frequency >= 0 ? 1 : -1;
+		const angle = Math.atan2(tip.y - center.y, tip.x - center.x);
+		const oppositeAngle = angle + Math.PI;
+		const tangentAngle = angle + direction * Math.PI * 0.5;
+		const oppositeTangentAngle = oppositeAngle + direction * Math.PI * 0.5;
+
+		const arrowSize = Math.max(4, Math.min(9, length * 0.08));
+		const arrowAlpha = Math.max(0.14, 0.55 - index * 0.018) * opacity;
+
+		const firstPoint = {
+			x: center.x + Math.cos(angle) * length,
+			y: center.y + Math.sin(angle) * length,
+		};
+
+		const secondPoint = {
+			x: center.x + Math.cos(oppositeAngle) * length,
+			y: center.y + Math.sin(oppositeAngle) * length,
+		};
+
+		drawArrowhead(
+			firstPoint.x,
+			firstPoint.y,
+			tangentAngle,
+			color,
+			arrowSize,
+			arrowAlpha,
+		);
+
+		drawArrowhead(
+			secondPoint.x,
+			secondPoint.y,
+			oppositeTangentAngle,
+			color,
+			arrowSize,
+			arrowAlpha,
+		);
+	}
+
 	function drawCompanionMode(
 		center: Point,
 		tip: Point,
@@ -417,6 +500,21 @@ export function EpicycleCanvas({
 				center,
 				tip,
 				companionUnit,
+				length,
+				frequency,
+				color,
+				strokeWidth,
+				index,
+				opacity,
+			);
+
+			return;
+		}
+
+		if (bivectorView === "disk") {
+			drawDiskMode(
+				center,
+				tip,
 				length,
 				frequency,
 				color,
