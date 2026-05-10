@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { EpicycleCanvas, type BivectorView } from "./components/EpicycleCanvas";
 import { computeFourierTerms } from "./math/fourier";
@@ -26,6 +27,8 @@ type AppMode = "draw" | "animate";
 
 function App() {
 	const canvasStageRef = useRef<HTMLElement | null>(null);
+	const soundEngineRef = useRef<DrawingSoundEngine | null>(null);
+	const soundFrameRef = useRef<number | null>(null);
 
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -34,6 +37,7 @@ function App() {
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
 	const [bivectorView, setBivectorView] = useState<BivectorView>("blade");
+	const [isSoundEnabled, setIsSoundEnabled] = useState(false);
 
 	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
 	const [penWidth, setPenWidth] = useState(4);
@@ -63,6 +67,17 @@ function App() {
 		[strokes],
 	);
 
+	const sonicStrokes: SonicStroke[] = useMemo(
+		() =>
+			animatedStrokes.map(stroke => ({
+				id: stroke.id,
+				color: stroke.color,
+				width: stroke.width,
+				terms: stroke.terms,
+			})),
+		[animatedStrokes],
+	);
+
 	const hasAnimationData = animatedStrokes.some(
 		stroke => stroke.terms.length > 0,
 	);
@@ -80,24 +95,70 @@ function App() {
 	const isAnimationMode = mode === "animate";
 	const isCanvasInteractive = mode === "draw";
 
+	function getSoundEngine() {
+		if (!soundEngineRef.current) {
+			soundEngineRef.current = new DrawingSoundEngine();
+		}
+
+		return soundEngineRef.current;
+	}
+
+	function stopSoundFrame() {
+		if (soundFrameRef.current !== null) {
+			cancelAnimationFrame(soundFrameRef.current);
+			soundFrameRef.current = null;
+		}
+	}
+
 	function clearEverything() {
 		setIsAnimationPlaying(false);
 		setMode("draw");
 		setIsSnapshotMenuOpen(false);
+		setIsSoundEnabled(false);
 		setClearSignal(value => value + 1);
 		setStrokes([]);
+
+		stopSoundFrame();
+		soundEngineRef.current?.stop();
+		soundEngineRef.current?.resetClock();
 	}
 
 	function enterDrawMode() {
 		setIsAnimationPlaying(false);
 		setMode("draw");
+
+		stopSoundFrame();
+		soundEngineRef.current?.stop();
+		soundEngineRef.current?.resetClock();
 	}
 
 	function toggleAnimation() {
 		if (!hasAnimationData) return;
 
+		if (mode !== "animate") {
+			soundEngineRef.current?.resetClock();
+		}
+
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
+	}
+
+	async function toggleSound() {
+		if (isSoundEnabled) {
+			setIsSoundEnabled(false);
+			stopSoundFrame();
+			soundEngineRef.current?.stop();
+			return;
+		}
+
+		try {
+			const engine = getSoundEngine();
+			await engine.enable();
+			setIsSoundEnabled(true);
+		} catch (error) {
+			console.error("Unable to start audio engine.", error);
+			setIsSoundEnabled(false);
+		}
 	}
 
 	function downloadBlob(blob: Blob, filename: string) {
@@ -205,8 +266,41 @@ function App() {
 		downloadBlob(blob, "bifourcation-snapshot.png");
 	}
 
+	useEffect(() => {
+		stopSoundFrame();
+
+		const engine = soundEngineRef.current;
+
+		if (
+			!engine ||
+			!isSoundEnabled ||
+			!isAnimationPlaying ||
+			!isAnimationMode ||
+			sonicStrokes.length === 0
+		) {
+			engine?.stop();
+			return;
+		}
+
+		const activeEngine = engine;
+
+		void activeEngine.start();
+
+		function tickSound() {
+			activeEngine.tick(sonicStrokes);
+			soundFrameRef.current = requestAnimationFrame(tickSound);
+		}
+
+		soundFrameRef.current = requestAnimationFrame(tickSound);
+
+		return () => {
+			stopSoundFrame();
+			activeEngine.stop();
+		};
+	}, [isSoundEnabled, isAnimationPlaying, isAnimationMode, sonicStrokes]);
+
 	return (
-		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
+		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
 				<header className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
 					<div className="flex items-center gap-3">
@@ -425,6 +519,42 @@ function App() {
 							</section>
 						</div>
 					</div>
+
+					<button
+						className={[
+							"absolute bottom-3 right-16 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border shadow-lg backdrop-blur transition disabled:cursor-not-allowed disabled:opacity-40",
+							isSoundEnabled
+								? "border-zinc-100 bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
+								: "border-zinc-700/70 bg-zinc-950/70 text-zinc-100 hover:bg-zinc-900/90",
+						].join(" ")}
+						onClick={toggleSound}
+						disabled={!hasAnimationData}
+						aria-label={
+							isSoundEnabled ? "Turn sound off" : "Turn sound on"
+						}
+						title={isSoundEnabled ? "Sound on" : "Sound off"}
+					>
+						<svg
+							aria-hidden="true"
+							viewBox="0 0 24 24"
+							className="h-5 w-5"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M4 9v6h4l5 4V5L8 9H4Z" />
+							{isSoundEnabled ? (
+								<>
+									<path d="M16 9.5a4 4 0 0 1 0 5" />
+									<path d="M18.5 7a7.5 7.5 0 0 1 0 10" />
+								</>
+							) : (
+								<path d="m17 9 4 4m0-4-4 4" />
+							)}
+						</svg>
+					</button>
 
 					<button
 						className="absolute bottom-3 right-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
