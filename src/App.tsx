@@ -209,13 +209,23 @@ function App() {
 		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
 				<header className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
-					<div>
-						<h1 className="text-xl font-semibold tracking-tight">
-							Bifourcation
-						</h1>
-						<p className="text-sm text-zinc-400">
-							Draw a shape. Watch it split into rotating geometry.
-						</p>
+					<div className="flex items-center gap-3">
+						<img
+							src="/bifourcation_logo.png"
+							alt=""
+							aria-hidden="true"
+							className="h-11 w-11 shrink-0 rounded-xl object-contain"
+						/>
+
+						<div>
+							<h1 className="text-xl font-semibold tracking-tight">
+								Bifourcation
+							</h1>
+							<p className="text-sm text-zinc-400">
+								Draw a shape. Watch it split into rotating
+								geometry.
+							</p>
+						</div>
 					</div>
 
 					<div className="w-fit rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-medium text-zinc-300">
