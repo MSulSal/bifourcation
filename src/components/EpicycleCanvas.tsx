@@ -3,6 +3,8 @@ import type { Multivector } from "../math/clifford";
 import { evaluateFourierTerms, type FourierTerm } from "../math/fourier";
 import type { Point } from "../types/geometry";
 
+export type BivectorView = "blade" | "companion";
+
 type AnimatedStroke = {
 	id: string;
 	color: string;
@@ -16,15 +18,13 @@ type EpicycleCanvasProps = {
 	isActive: boolean;
 	isPlaying: boolean;
 	termLimit: number;
+	bivectorView: BivectorView;
 };
 
 const STROKE_DURATION_MS = 6500;
 const MAX_VISIBLE_BLADES = 64;
 const MAX_ARROWED_BLADES = 24;
 
-// Use a value just before the loop wraps back to 0.
-// For Fourier reconstruction, progress 1 and progress 0 are effectively the same,
-// so 0.999 preserves the "just-finished" visual state better.
 const COMPLETED_STROKE_PROGRESS = 0.999;
 
 export function EpicycleCanvas({
@@ -32,6 +32,7 @@ export function EpicycleCanvas({
 	isActive,
 	isPlaying,
 	termLimit,
+	bivectorView,
 }: EpicycleCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const animationFrameRef = useRef<number | null>(null);
@@ -184,35 +185,22 @@ export function EpicycleCanvas({
 		ctx.globalAlpha = 1;
 	}
 
-	function drawOrientedBlade(
+	function drawBladeMode(
 		center: Point,
 		tip: Point,
+		companionUnit: Point,
+		length: number,
 		frequency: number,
 		color: string,
 		strokeWidth: number,
 		index: number,
-		opacity = 1,
+		opacity: number,
 	) {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
-
-		const dx = tip.x - center.x;
-		const dy = tip.y - center.y;
-		const length = Math.hypot(dx, dy);
-
-		if (length < 4 || index >= MAX_VISIBLE_BLADES) return;
-
-		const orientation = frequency >= 0 ? 1 : -1;
-
-		// This is the visible e₁e₂ action: rotate the component vector by 90°
-		// inside the drawing plane. The sign flips with frequency orientation.
-		const companionUnit = {
-			x: orientation * (-dy / length),
-			y: orientation * (dx / length),
-		};
 
 		const bladeThickness = Math.max(5, Math.min(22, length * 0.16));
 		const halfOffset = {
@@ -292,7 +280,7 @@ export function EpicycleCanvas({
 
 		if (index >= MAX_ARROWED_BLADES || frequency === 0) return;
 
-		const componentAngle = Math.atan2(dy, dx);
+		const componentAngle = Math.atan2(tip.y - center.y, tip.x - center.x);
 		const companionAngle = Math.atan2(companionUnit.y, companionUnit.x);
 		const arrowSize = Math.max(4, Math.min(9, length * 0.09));
 		const arrowAlpha = Math.max(0.14, 0.58 - index * 0.018) * opacity;
@@ -335,6 +323,123 @@ export function EpicycleCanvas({
 		);
 	}
 
+	function drawCompanionMode(
+		center: Point,
+		tip: Point,
+		companionUnit: Point,
+		length: number,
+		color: string,
+		strokeWidth: number,
+		index: number,
+		opacity: number,
+	) {
+		if (index >= MAX_VISIBLE_BLADES) return;
+
+		const companionTip = {
+			x: center.x + companionUnit.x * length,
+			y: center.y + companionUnit.y * length,
+		};
+
+		const vectorAlpha = Math.max(0.2, 0.72 - index * 0.006) * opacity;
+		const companionAlpha = Math.max(0.12, 0.42 - index * 0.004) * opacity;
+		const bridgeAlpha = Math.max(0.04, 0.18 - index * 0.0025) * opacity;
+
+		drawLine(
+			center,
+			tip,
+			color,
+			Math.max(1, strokeWidth * 0.42),
+			vectorAlpha,
+		);
+
+		drawLine(
+			center,
+			companionTip,
+			color,
+			Math.max(1, strokeWidth * 0.32),
+			companionAlpha,
+		);
+
+		drawLine(tip, companionTip, color, 1, bridgeAlpha);
+
+		if (index >= MAX_ARROWED_BLADES) return;
+
+		const componentAngle = Math.atan2(tip.y - center.y, tip.x - center.x);
+		const companionAngle = Math.atan2(
+			companionTip.y - center.y,
+			companionTip.x - center.x,
+		);
+		const arrowSize = Math.max(4, Math.min(9, length * 0.08));
+		const arrowAlpha = Math.max(0.14, 0.58 - index * 0.018) * opacity;
+
+		drawArrowhead(
+			tip.x,
+			tip.y,
+			componentAngle,
+			color,
+			arrowSize,
+			arrowAlpha,
+		);
+		drawArrowhead(
+			companionTip.x,
+			companionTip.y,
+			companionAngle,
+			color,
+			arrowSize,
+			arrowAlpha * 0.85,
+		);
+	}
+
+	function drawOrientedComponent(
+		center: Point,
+		tip: Point,
+		frequency: number,
+		color: string,
+		strokeWidth: number,
+		index: number,
+		opacity = 1,
+	) {
+		const dx = tip.x - center.x;
+		const dy = tip.y - center.y;
+		const length = Math.hypot(dx, dy);
+
+		if (length < 4 || index >= MAX_VISIBLE_BLADES) return;
+
+		const orientation = frequency >= 0 ? 1 : -1;
+
+		const companionUnit = {
+			x: orientation * (-dy / length),
+			y: orientation * (dx / length),
+		};
+
+		if (bivectorView === "blade") {
+			drawBladeMode(
+				center,
+				tip,
+				companionUnit,
+				length,
+				frequency,
+				color,
+				strokeWidth,
+				index,
+				opacity,
+			);
+
+			return;
+		}
+
+		drawCompanionMode(
+			center,
+			tip,
+			companionUnit,
+			length,
+			color,
+			strokeWidth,
+			index,
+			opacity,
+		);
+	}
+
 	function drawBladeSet(
 		stroke: AnimatedStroke,
 		progress: number,
@@ -363,7 +468,7 @@ export function EpicycleCanvas({
 			const center = getCanvasPoint(epicycle.center);
 			const tip = getCanvasPoint(epicycle.tip);
 
-			drawOrientedBlade(
+			drawOrientedComponent(
 				center,
 				tip,
 				epicycle.frequency,
@@ -474,7 +579,7 @@ export function EpicycleCanvas({
 		return () => {
 			resizeObserver.disconnect();
 		};
-	}, [isActive, strokes]);
+	}, [isActive, strokes, termLimit, bivectorView]);
 
 	useEffect(() => {
 		if (!isActive || strokes.length === 0) {
@@ -486,11 +591,18 @@ export function EpicycleCanvas({
 		if (!isPlaying) {
 			stopAnimation();
 
-			if (!lastDrawnFrameRef.current) {
-				traceRef.current = [];
-				activeStrokeIndexRef.current = 0;
-				drawFrame(0, 0);
+			if (lastDrawnFrameRef.current) {
+				drawFrame(
+					lastDrawnFrameRef.current.strokeIndex,
+					lastDrawnFrameRef.current.progress,
+				);
+
+				return;
 			}
+
+			traceRef.current = [];
+			activeStrokeIndexRef.current = 0;
+			drawFrame(0, 0);
 
 			return;
 		}
@@ -537,7 +649,7 @@ export function EpicycleCanvas({
 		return () => {
 			stopAnimation();
 		};
-	}, [isActive, isPlaying, strokes, termLimit]);
+	}, [isActive, isPlaying, strokes, termLimit, bivectorView]);
 
 	return (
 		<canvas

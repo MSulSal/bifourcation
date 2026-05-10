@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
-import { EpicycleCanvas } from "./components/EpicycleCanvas";
+import { EpicycleCanvas, type BivectorView } from "./components/EpicycleCanvas";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
 import type { Stroke } from "./types/geometry";
@@ -33,6 +33,7 @@ function App() {
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
+	const [bivectorView, setBivectorView] = useState<BivectorView>("blade");
 
 	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
 	const [penWidth, setPenWidth] = useState(4);
@@ -248,6 +249,7 @@ function App() {
 						isActive={isAnimationMode}
 						isPlaying={isAnimationPlaying}
 						termLimit={visibleTermCount}
+						bivectorView={bivectorView}
 					/>
 
 					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-wrap gap-2 text-[11px] font-medium text-zinc-100/45 sm:text-xs">
@@ -268,6 +270,34 @@ function App() {
 									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
 								</div>
 							</div>
+						</div>
+					)}
+
+					{isAnimationMode && (
+						<div className="absolute bottom-3 left-3 z-30 flex overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-1 text-xs font-semibold shadow-lg backdrop-blur">
+							<button
+								className={[
+									"rounded-xl px-3 py-2 transition",
+									bivectorView === "blade"
+										? "bg-zinc-50 text-zinc-950"
+										: "text-zinc-300 hover:bg-zinc-800/80",
+								].join(" ")}
+								onClick={() => setBivectorView("blade")}
+							>
+								Blade
+							</button>
+
+							<button
+								className={[
+									"rounded-xl px-3 py-2 transition",
+									bivectorView === "companion"
+										? "bg-zinc-50 text-zinc-950"
+										: "text-zinc-300 hover:bg-zinc-800/80",
+								].join(" ")}
+								onClick={() => setBivectorView("companion")}
+							>
+								Companion
+							</button>
 						</div>
 					)}
 
@@ -384,8 +414,8 @@ function App() {
 									</p>
 
 									<p className="text-zinc-500">
-										Rotating blades replace complex-number
-										circles.
+										Blade mode shows area. Companion mode
+										shows the e₁e₂-rotated vector.
 									</p>
 								</div>
 							</section>
