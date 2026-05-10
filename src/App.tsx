@@ -32,6 +32,7 @@ function App() {
 	const [mode, setMode] = useState<AppMode>("draw");
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
 
 	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
 	const [penWidth, setPenWidth] = useState(4);
@@ -81,6 +82,7 @@ function App() {
 	function clearEverything() {
 		setIsAnimationPlaying(false);
 		setMode("draw");
+		setIsSnapshotMenuOpen(false);
 		setClearSignal(value => value + 1);
 		setStrokes([]);
 	}
@@ -149,26 +151,36 @@ function App() {
 		});
 	}
 
-	async function shareSnapshot() {
+	async function captureSnapshotAndPause(): Promise<Blob | null> {
 		const shouldPauseAfterSnapshot =
 			mode === "animate" || isAnimationPlaying;
 
 		const blob = await createSnapshotBlob();
-		if (!blob) return;
+		if (!blob) return null;
 
 		if (shouldPauseAfterSnapshot) {
 			setMode("animate");
 			setIsAnimationPlaying(false);
 		}
 
+		setIsSnapshotMenuOpen(false);
+
+		return blob;
+	}
+
+	async function shareSnapshot() {
+		const blob = await captureSnapshotAndPause();
+		if (!blob) return;
+
 		const filename = "bifourcation-snapshot.png";
 		const file = new File([blob], filename, { type: "image/png" });
 
 		const canShareFiles =
 			typeof navigator.canShare === "function" &&
-			navigator.canShare({ files: [file] });
+			navigator.canShare({ files: [file] }) &&
+			typeof navigator.share === "function";
 
-		if (canShareFiles && typeof navigator.share === "function") {
+		if (canShareFiles) {
 			try {
 				await navigator.share({
 					title: "Bifourcation",
@@ -183,6 +195,13 @@ function App() {
 		}
 
 		downloadBlob(blob, filename);
+	}
+
+	async function downloadSnapshot() {
+		const blob = await captureSnapshotAndPause();
+		if (!blob) return;
+
+		downloadBlob(blob, "bifourcation-snapshot.png");
 	}
 
 	return (
@@ -343,10 +362,10 @@ function App() {
 
 					<button
 						className="absolute bottom-3 right-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
-						onClick={shareSnapshot}
+						onClick={() => setIsSnapshotMenuOpen(value => !value)}
 						disabled={strokes.length === 0}
-						aria-label="Share snapshot"
-						title="Share snapshot"
+						aria-label="Open snapshot menu"
+						title="Snapshot"
 					>
 						<svg
 							aria-hidden="true"
@@ -362,6 +381,24 @@ function App() {
 							<circle cx="12" cy="12.5" r="3.5" />
 						</svg>
 					</button>
+
+					{isSnapshotMenuOpen && strokes.length > 0 && (
+						<div className="absolute bottom-16 right-3 z-30 w-44 overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/80 shadow-lg backdrop-blur">
+							<button
+								className="block w-full px-4 py-3 text-left text-sm font-medium text-zinc-100 transition hover:bg-zinc-800/80"
+								onClick={shareSnapshot}
+							>
+								Share snapshot
+							</button>
+
+							<button
+								className="block w-full border-t border-zinc-800 px-4 py-3 text-left text-sm font-medium text-zinc-100 transition hover:bg-zinc-800/80"
+								onClick={downloadSnapshot}
+							>
+								Download PNG
+							</button>
+						</div>
+					)}
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
