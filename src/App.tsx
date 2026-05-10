@@ -73,6 +73,7 @@ function App() {
 				id: stroke.id,
 				color: stroke.color,
 				width: stroke.width,
+				path: stroke.path,
 				terms: stroke.terms,
 			})),
 		[animatedStrokes],
@@ -300,7 +301,7 @@ function App() {
 	}, [isSoundEnabled, isAnimationPlaying, isAnimationMode, sonicStrokes]);
 
 	return (
-		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
+		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
 				<header className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
 					<div className="flex items-center gap-3">
