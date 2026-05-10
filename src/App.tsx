@@ -37,7 +37,7 @@ function App() {
 	const [penWidth, setPenWidth] = useState(4);
 
 	const resampledPointCount = 256;
-	const visibleTermCount = 80;
+	const visibleTermCount = resampledPointCount;
 
 	const pointCount = strokes.reduce(
 		(total, stroke) => total + stroke.points.length,
@@ -340,6 +340,28 @@ function App() {
 							</section>
 						</div>
 					</div>
+
+					<button
+						className="absolute bottom-3 right-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
+						onClick={shareSnapshot}
+						disabled={strokes.length === 0}
+						aria-label="Share snapshot"
+						title="Share snapshot"
+					>
+						<svg
+							aria-hidden="true"
+							viewBox="0 0 24 24"
+							className="h-5 w-5"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M14.5 4.5 13 3h-2L9.5 4.5h-3A2.5 2.5 0 0 0 4 7v10.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V7a2.5 2.5 0 0 0-2.5-2.5h-3Z" />
+							<circle cx="12" cy="12.5" r="3.5" />
+						</svg>
+					</button>
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
@@ -372,13 +394,6 @@ function App() {
 							onClick={clearEverything}
 						>
 							Clear canvas
-						</button>
-
-						<button
-							className={INACTIVE_BUTTON_CLASS}
-							onClick={shareSnapshot}
-						>
-							Share snapshot
 						</button>
 					</div>
 				</aside>
