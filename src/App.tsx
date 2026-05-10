@@ -150,8 +150,16 @@ function App() {
 	}
 
 	async function shareSnapshot() {
+		const shouldPauseAfterSnapshot =
+			mode === "animate" || isAnimationPlaying;
+
 		const blob = await createSnapshotBlob();
 		if (!blob) return;
+
+		if (shouldPauseAfterSnapshot) {
+			setMode("animate");
+			setIsAnimationPlaying(false);
+		}
 
 		const filename = "bifourcation-snapshot.png";
 		const file = new File([blob], filename, { type: "image/png" });
