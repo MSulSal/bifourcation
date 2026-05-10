@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { EpicycleCanvas } from "./components/EpicycleCanvas";
 import { computeFourierTerms } from "./math/fourier";
@@ -25,6 +25,8 @@ const INACTIVE_BUTTON_CLASS =
 type AppMode = "draw" | "animate";
 
 function App() {
+	const canvasStageRef = useRef<HTMLElement | null>(null);
+
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
 	const [mode, setMode] = useState<AppMode>("draw");
@@ -95,6 +97,86 @@ function App() {
 		setIsAnimationPlaying(value => !value);
 	}
 
+	function downloadBlob(blob: Blob, filename: string) {
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+
+		link.href = url;
+		link.download = filename;
+		link.click();
+
+		URL.revokeObjectURL(url);
+	}
+
+	async function createSnapshotBlob(): Promise<Blob | null> {
+		const stage = canvasStageRef.current;
+		if (!stage) return null;
+
+		const canvases = Array.from(stage.querySelectorAll("canvas"));
+		if (canvases.length === 0) return null;
+
+		const rect = stage.getBoundingClientRect();
+		const dpr = window.devicePixelRatio || 1;
+
+		const snapshot = document.createElement("canvas");
+		snapshot.width = Math.round(rect.width * dpr);
+		snapshot.height = Math.round(rect.height * dpr);
+
+		const ctx = snapshot.getContext("2d");
+		if (!ctx) return null;
+
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		ctx.fillStyle = "#18181b";
+		ctx.fillRect(0, 0, rect.width, rect.height);
+
+		for (const [index, canvas] of canvases.entries()) {
+			const canvasRect = canvas.getBoundingClientRect();
+
+			ctx.globalAlpha = index === 0 && isAnimationMode ? 0.2 : 1;
+			ctx.drawImage(
+				canvas,
+				canvasRect.left - rect.left,
+				canvasRect.top - rect.top,
+				canvasRect.width,
+				canvasRect.height,
+			);
+		}
+
+		ctx.globalAlpha = 1;
+
+		return new Promise(resolve => {
+			snapshot.toBlob(blob => resolve(blob), "image/png");
+		});
+	}
+
+	async function shareSnapshot() {
+		const blob = await createSnapshotBlob();
+		if (!blob) return;
+
+		const filename = "bifourcation-snapshot.png";
+		const file = new File([blob], filename, { type: "image/png" });
+
+		const canShareFiles =
+			typeof navigator.canShare === "function" &&
+			navigator.canShare({ files: [file] });
+
+		if (canShareFiles && typeof navigator.share === "function") {
+			try {
+				await navigator.share({
+					title: "Bifourcation",
+					text: "Fourier epicycles through geometric algebra.",
+					files: [file],
+				});
+
+				return;
+			} catch {
+				// Fall back to download if the share sheet fails or is dismissed.
+			}
+		}
+
+		downloadBlob(blob, filename);
+	}
+
 	return (
 		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
@@ -113,7 +195,10 @@ function App() {
 					</div>
 				</header>
 
-				<section className="relative min-h-0 flex-1 overflow-hidden bg-zinc-900">
+				<section
+					ref={canvasStageRef}
+					className="relative min-h-0 flex-1 overflow-hidden bg-zinc-900"
+				>
 					<div
 						className={[
 							"h-full w-full transition-opacity duration-200",
@@ -147,6 +232,17 @@ function App() {
 						<span>·</span>
 						<span>{totalFourierTerms} terms</span>
 					</div>
+
+					{isAnimationMode && !isAnimationPlaying && (
+						<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+							<div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-zinc-700/70 bg-zinc-950/60 shadow-lg backdrop-blur">
+								<div className="flex gap-2">
+									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
+									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
+								</div>
+							</div>
+						</div>
+					)}
 
 					<button
 						className="absolute right-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
@@ -268,6 +364,13 @@ function App() {
 							onClick={clearEverything}
 						>
 							Clear canvas
+						</button>
+
+						<button
+							className={INACTIVE_BUTTON_CLASS}
+							onClick={shareSnapshot}
+						>
+							Share snapshot
 						</button>
 					</div>
 				</aside>

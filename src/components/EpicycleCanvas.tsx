@@ -19,11 +19,9 @@ type EpicycleCanvasProps = {
 };
 
 const STROKE_DURATION_MS = 6500;
+const FINAL_HOLD_MS = 5000;
 const MAX_ARROWED_EPICYCLES = 18;
 
-// Use a value just before the loop wraps back to 0.
-// For Fourier reconstruction, progress 1 and progress 0 are effectively the same,
-// so 0.999 preserves the "just-finished" visual state better.
 const COMPLETED_STROKE_PROGRESS = 0.999;
 
 export function EpicycleCanvas({
@@ -290,6 +288,31 @@ export function EpicycleCanvas({
 		});
 	}
 
+	function drawFinalFrame() {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const rect = canvas.getBoundingClientRect();
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		ctx.clearRect(0, 0, rect.width, rect.height);
+
+		for (const stroke of strokes) {
+			drawCompletedStroke(stroke);
+		}
+
+		traceRef.current = [];
+
+		lastDrawnFrameRef.current =
+			strokes.length > 0
+				? {
+						strokeIndex: strokes.length - 1,
+						progress: COMPLETED_STROKE_PROGRESS,
+					}
+				: null;
+	}
+
 	function drawFrame(strokeIndex: number, progress: number) {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
@@ -393,9 +416,16 @@ export function EpicycleCanvas({
 				startedAtRef.current = timestamp;
 			}
 
-			const totalDuration = strokes.length * STROKE_DURATION_MS;
+			const animationDuration = strokes.length * STROKE_DURATION_MS;
+			const cycleDuration = animationDuration + FINAL_HOLD_MS;
 			const elapsed = timestamp - startedAtRef.current;
-			const loopElapsed = elapsed % totalDuration;
+			const loopElapsed = elapsed % cycleDuration;
+
+			if (loopElapsed >= animationDuration) {
+				drawFinalFrame();
+				animationFrameRef.current = requestAnimationFrame(animate);
+				return;
+			}
 
 			const strokeIndex = Math.min(
 				strokes.length - 1,
