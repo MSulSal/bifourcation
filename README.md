@@ -12,7 +12,7 @@ Bifourcation is an interactive Fourier drawing app built around geometric algebr
 - Compute Fourier terms for each stroke.
 - Animate each stroke in order.
 - Preserve completed stroke reconstructions while later strokes animate.
-- Visualize Fourier components as oriented blades, disks, or companion vectors.
+- Visualize Fourier components as oriented blades, equal-area disks, or companion vectors.
 - Export/share snapshots of the current reconstruction.
 
 ## Why this exists
