@@ -44,8 +44,14 @@ function App() {
 
 	const visibleTermCount = Math.min(80, fourierTerms.length);
 
+	function clearEverything() {
+		setIsAnimating(false);
+		setClearSignal(value => value + 1);
+		setStrokes([]);
+	}
+
 	return (
-		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
+		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
 				<header className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
 					<div>
@@ -66,7 +72,9 @@ function App() {
 					<div
 						className={[
 							"h-full w-full transition-opacity duration-200",
-							isAnimating ? "opacity-20" : "opacity-100",
+							isAnimating
+								? "pointer-events-none opacity-20"
+								: "pointer-events-auto opacity-100",
 						].join(" ")}
 					>
 						<DrawingCanvas
@@ -211,24 +219,20 @@ function App() {
 							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
 							onClick={() => setIsAnimating(false)}
 						>
-							Draw
+							{isAnimating ? "Pause" : "Draw"}
 						</button>
 
 						<button
 							className="shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-							disabled={fourierTerms.length === 0}
-							onClick={() => setIsAnimating(value => !value)}
+							disabled={fourierTerms.length === 0 || isAnimating}
+							onClick={() => setIsAnimating(true)}
 						>
-							{isAnimating ? "Pause" : "Animate"}
+							Animate
 						</button>
 
 						<button
 							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
-							onClick={() => {
-								setIsAnimating(false);
-								setClearSignal(value => value + 1);
-								setStrokes([]);
-							}}
+							onClick={clearEverything}
 						>
 							Clear canvas
 						</button>

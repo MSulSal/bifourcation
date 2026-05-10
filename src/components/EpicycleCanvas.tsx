@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
-import type { FourierTerm } from "../math/fourier";
-import { evaluateFourierTerms } from "../math/fourier";
 import type { Multivector } from "../math/clifford";
+import { evaluateFourierTerms, type FourierTerm } from "../math/fourier";
 
 type EpicycleCanvasProps = {
 	terms: FourierTerm[];
@@ -33,6 +32,26 @@ export function EpicycleCanvas({
 		if (!ctx) return;
 
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	}
+
+	function clearOverlay() {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const rect = canvas.getBoundingClientRect();
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		ctx.clearRect(0, 0, rect.width, rect.height);
+		traceRef.current = [];
+		startedAtRef.current = null;
+	}
+
+	function stopAnimation() {
+		if (animationFrameRef.current !== null) {
+			cancelAnimationFrame(animationFrameRef.current);
+			animationFrameRef.current = null;
+		}
 	}
 
 	function getCanvasPoint(value: Multivector) {
@@ -115,6 +134,10 @@ export function EpicycleCanvas({
 
 		const resizeObserver = new ResizeObserver(() => {
 			resizeCanvasToDisplaySize();
+
+			if (!isPlaying) {
+				clearOverlay();
+			}
 		});
 
 		resizeObserver.observe(canvas);
@@ -122,20 +145,16 @@ export function EpicycleCanvas({
 		return () => {
 			resizeObserver.disconnect();
 		};
-	}, []);
+	}, [isPlaying]);
 
 	useEffect(() => {
 		if (!isPlaying || terms.length === 0) {
-			if (animationFrameRef.current !== null) {
-				cancelAnimationFrame(animationFrameRef.current);
-				animationFrameRef.current = null;
-			}
-
+			stopAnimation();
+			clearOverlay();
 			return;
 		}
 
-		traceRef.current = [];
-		startedAtRef.current = null;
+		clearOverlay();
 
 		function animate(timestamp: number) {
 			if (startedAtRef.current === null) {
@@ -158,10 +177,7 @@ export function EpicycleCanvas({
 		animationFrameRef.current = requestAnimationFrame(animate);
 
 		return () => {
-			if (animationFrameRef.current !== null) {
-				cancelAnimationFrame(animationFrameRef.current);
-				animationFrameRef.current = null;
-			}
+			stopAnimation();
 		};
 	}, [isPlaying, terms, termLimit]);
 
