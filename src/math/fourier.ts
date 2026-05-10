@@ -10,6 +10,7 @@ import {
 import {
 	evenMagnitude,
 	evenPhase,
+	evenMultivectorToVector,
 	rotor,
 	vectorToEvenMultivector,
 } from "./evenSubalgebra";
@@ -18,6 +19,14 @@ export type FourierTerm = {
 	frequency: number;
 	coefficient: Multivector;
 	amplitude: number;
+	phase: number;
+};
+
+export type EpicycleState = {
+	center: Multivector;
+	tip: Multivector;
+	radius: number;
+	frequency: number;
 	phase: number;
 };
 
@@ -71,4 +80,45 @@ export function computeFourierTerms(points: Point[]): FourierTerm[] {
 	return computeDft(pointsToEvenSignal(points)).sort(
 		(a, b) => b.amplitude - a.amplitude,
 	);
+}
+
+export function evaluateFourierTerms(
+	terms: FourierTerm[],
+	progress: number,
+	termLimit = terms.length,
+): {
+	epicycles: EpicycleState[];
+	point: Multivector;
+} {
+	const activeTerms = terms.slice(0, termLimit);
+
+	let currentEven = ZERO;
+	const epicycles: EpicycleState[] = [];
+
+	for (const term of activeTerms) {
+		const center = evenMultivectorToVector(currentEven);
+
+		const angle = 2 * Math.PI * term.frequency * progress;
+		const rotatingCoefficient = geometricProduct(
+			term.coefficient,
+			rotor(angle),
+		);
+
+		currentEven = addMultivectors(currentEven, rotatingCoefficient);
+
+		const tip = evenMultivectorToVector(currentEven);
+
+		epicycles.push({
+			center,
+			tip,
+			radius: term.amplitude,
+			frequency: term.frequency,
+			phase: term.phase,
+		});
+	}
+
+	return {
+		epicycles,
+		point: evenMultivectorToVector(currentEven),
+	};
 }

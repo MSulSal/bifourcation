@@ -3,6 +3,7 @@ import { DrawingCanvas } from "./components/DrawingCanvas";
 import type { Stroke } from "./types/geometry";
 import { resamplePath } from "./math/path";
 import { computeFourierTerms } from "./math/fourier";
+import { EpicycleCanvas } from "./components/EpicycleCanvas";
 // import { algebraAxiomsHold } from "./math/clifford";
 
 // console.log(algebraAxiomsHold());
@@ -10,6 +11,7 @@ import { computeFourierTerms } from "./math/fourier";
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
+	const [isAnimating, setIsAnimating] = useState(false);
 
 	const pointCount = strokes.reduce(
 		(total, stroke) => total + stroke.points.length,
@@ -25,6 +27,8 @@ function App() {
 
 	const fourierTerms =
 		resampledPath.length > 0 ? computeFourierTerms(resampledPath) : [];
+
+	const visibleTermCount = Math.min(80, fourierTerms.length);
 
 	const largestTerm = fourierTerms[0];
 
@@ -46,22 +50,40 @@ function App() {
 					</div>
 				</header>
 
-				<section className="min-h-0 flex-1 bg-zinc-900">
+				<section className="relative min-h-0 flex-1 bg-zinc-900">
 					<DrawingCanvas
 						clearSignal={clearSignal}
 						onStrokesChange={setStrokes}
+					/>
+
+					<EpicycleCanvas
+						terms={fourierTerms}
+						isPlaying={isAnimating}
+						termLimit={visibleTermCount}
 					/>
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
 					<div className="flex items-center gap-3 overflow-x-auto">
-						<button className="shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200">
-							Start drawing
+						<button
+							className="shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200"
+							onClick={() => setIsAnimating(false)}
+						>
+							Draw
+						</button>
+
+						<button
+							className="shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+							disabled={fourierTerms.length === 0}
+							onClick={() => setIsAnimating(value => !value)}
+						>
+							{isAnimating ? "Pause" : "Animate"}
 						</button>
 
 						<button
 							className="shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800"
 							onClick={() => {
+								setIsAnimating(false);
 								setClearSignal(value => value + 1);
 								setStrokes([]);
 							}}
