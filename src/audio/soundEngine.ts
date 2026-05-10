@@ -1,6 +1,8 @@
 import type { FourierTerm } from "../math/fourier";
 import type { Point } from "../types/geometry";
 
+export type BivectorSoundView = "blade" | "disk" | "companion";
+
 export type SonicStroke = {
 	id: string;
 	color: string;
@@ -10,16 +12,13 @@ export type SonicStroke = {
 };
 
 const STROKE_DURATION_MS = 6500;
-const SOUND_STEP_MS = 260;
-const MAX_SOUND_TERMS = 12;
+const MAX_SOUND_TERMS = 14;
 
-// D major pentatonic: soft, open, hard to make ugly.
-// This is intentionally more "musical cups / C418-ish" than "raw spectrum."
 const ROOT_MIDI = 50; // D3
-const SCALE = [0, 2, 4, 7, 9];
+const SCALE = [0, 2, 4, 7, 9]; // D major pentatonic
 const OCTAVE_COUNT = 4;
 
-const MASTER_GAIN = 0.105;
+const MASTER_GAIN = 0.11;
 
 type WebAudioWindow = Window &
 	typeof globalThis & {
@@ -33,6 +32,13 @@ type SampledPathPoint = {
 	normalizedX: number;
 	normalizedY: number;
 	curvature: number;
+	tangentAngle: number;
+};
+
+type SinePartial = {
+	ratio: number;
+	gain: number;
+	detune?: number;
 };
 
 function midiToHz(midi: number) {
@@ -124,6 +130,7 @@ function samplePathAtProgress(
 			normalizedX: 0.5,
 			normalizedY: 0.5,
 			curvature: 0,
+			tangentAngle: 0,
 		};
 	}
 
@@ -137,6 +144,7 @@ function samplePathAtProgress(
 			normalizedX: 0.5,
 			normalizedY: 0.5,
 			curvature: 0,
+			tangentAngle: 0,
 		};
 	}
 
@@ -148,8 +156,8 @@ function samplePathAtProgress(
 	const t = exactIndex - lowerIndex;
 
 	const point = lerpPoint(path[lowerIndex], path[upperIndex], t);
-	const previous = path[Math.max(0, lowerIndex - 2)];
-	const next = path[Math.min(path.length - 1, upperIndex + 2)];
+	const previous = path[Math.max(0, lowerIndex - 3)];
+	const next = path[Math.min(path.length - 1, upperIndex + 3)];
 
 	const normalizedX = clamp(
 		(point.x - bounds.minX) / (bounds.maxX - bounds.minX),
@@ -166,6 +174,8 @@ function samplePathAtProgress(
 	const angle = getAngleBetween(previous, point, next);
 	const curvature = clamp(angle / Math.PI, 0, 1);
 
+	const tangentAngle = Math.atan2(next.y - previous.y, next.x - previous.x);
+
 	return {
 		point,
 		previous,
@@ -173,7 +183,15 @@ function samplePathAtProgress(
 		normalizedX,
 		normalizedY,
 		curvature,
+		tangentAngle,
 	};
+}
+
+function getSoundStepMs(view: BivectorSoundView, curvature: number) {
+	if (view === "disk") return 330 - curvature * 40;
+	if (view === "companion") return 290 - curvature * 35;
+
+	return 210 - curvature * 45;
 }
 
 export class DrawingSoundEngine {
@@ -212,7 +230,7 @@ export class DrawingSoundEngine {
 			const now = context.currentTime;
 
 			this.masterGain.gain.cancelScheduledValues(now);
-			this.masterGain.gain.setTargetAtTime(MASTER_GAIN, now, 0.16);
+			this.masterGain.gain.setTargetAtTime(MASTER_GAIN, now, 0.18);
 		}
 	}
 
@@ -224,7 +242,7 @@ export class DrawingSoundEngine {
 		const now = this.context.currentTime;
 
 		this.masterGain.gain.cancelScheduledValues(now);
-		this.masterGain.gain.setTargetAtTime(0.0001, now, 0.16);
+		this.masterGain.gain.setTargetAtTime(0.0001, now, 0.18);
 	}
 
 	resetClock() {
@@ -234,7 +252,7 @@ export class DrawingSoundEngine {
 		this.activeStrokeId = null;
 	}
 
-	tick(strokes: SonicStroke[]) {
+	tick(strokes: SonicStroke[], view: BivectorSoundView) {
 		if (!this.isRunning || !this.context || !this.inputGain) return;
 		if (strokes.length === 0) return;
 
@@ -243,8 +261,6 @@ export class DrawingSoundEngine {
 		if (this.startedAtMs === null) {
 			this.startedAtMs = nowMs;
 		}
-
-		if (nowMs - this.lastTriggerAtMs < SOUND_STEP_MS) return;
 
 		const animationDuration = strokes.length * STROKE_DURATION_MS;
 		const elapsed = nowMs - this.startedAtMs;
@@ -260,6 +276,11 @@ export class DrawingSoundEngine {
 		const stroke = strokes[strokeIndex];
 
 		if (!stroke) return;
+
+		const sampled = samplePathAtProgress(stroke.path, progress);
+		const stepMs = getSoundStepMs(view, sampled.curvature);
+
+		if (nowMs - this.lastTriggerAtMs < stepMs) return;
 
 		if (stroke.id !== this.activeStrokeId) {
 			this.activeStrokeId = stroke.id;
@@ -282,15 +303,21 @@ export class DrawingSoundEngine {
 			1,
 		);
 
-		const sampled = samplePathAtProgress(stroke.path, progress);
+		const tangentOffset = Math.round(
+			((sampled.tangentAngle + Math.PI) / (Math.PI * 2)) *
+				audibleTerms.length,
+		);
 
-		const progressOffset = Math.floor(progress * audibleTerms.length);
+		const pathOffset = Math.floor(progress * audibleTerms.length);
+
 		const termIndex =
-			(progressOffset + this.noteIndex * 3) % audibleTerms.length;
+			(pathOffset + tangentOffset + this.noteIndex * 2) %
+			audibleTerms.length;
 
 		const term = audibleTerms[termIndex];
 
-		this.triggerGlassNote({
+		this.triggerPathNote({
+			view,
 			term,
 			termIndex,
 			maxAmplitude,
@@ -319,32 +346,31 @@ export class DrawingSoundEngine {
 		const delay = context.createDelay(2);
 		const delayFeedback = context.createGain();
 		const delayReturn = context.createGain();
-		const lowpass = context.createBiquadFilter();
 		const highpass = context.createBiquadFilter();
+		const lowpass = context.createBiquadFilter();
 		const compressor = context.createDynamicsCompressor();
 		const masterGain = context.createGain();
 
 		inputGain.gain.value = 1;
-
 		dryGain.gain.value = 0.88;
 
-		delay.delayTime.value = 0.56;
-		delayFeedback.gain.value = 0.22;
-		delayReturn.gain.value = 0.15;
+		delay.delayTime.value = 0.58;
+		delayFeedback.gain.value = 0.2;
+		delayReturn.gain.value = 0.14;
 
 		highpass.type = "highpass";
-		highpass.frequency.value = 95;
+		highpass.frequency.value = 90;
 		highpass.Q.value = 0.5;
 
 		lowpass.type = "lowpass";
-		lowpass.frequency.value = 2450;
-		lowpass.Q.value = 0.45;
+		lowpass.frequency.value = 2600;
+		lowpass.Q.value = 0.42;
 
-		compressor.threshold.value = -26;
+		compressor.threshold.value = -28;
 		compressor.knee.value = 26;
-		compressor.ratio.value = 3;
+		compressor.ratio.value = 2.8;
 		compressor.attack.value = 0.018;
-		compressor.release.value = 0.32;
+		compressor.release.value = 0.36;
 
 		masterGain.gain.value = 0.0001;
 
@@ -369,7 +395,53 @@ export class DrawingSoundEngine {
 		return context;
 	}
 
-	private triggerGlassNote({
+	private getScaleStep({
+		sampled,
+		term,
+		maxFrequency,
+		view,
+	}: {
+		sampled: SampledPathPoint;
+		term: FourierTerm;
+		maxFrequency: number;
+		view: BivectorSoundView;
+	}) {
+		const totalScaleSteps = SCALE.length * OCTAVE_COUNT;
+
+		const normalizedFrequency =
+			Math.log2(1 + Math.abs(term.frequency)) /
+			Math.log2(1 + maxFrequency);
+
+		const verticalContour = Math.round(
+			(1 - sampled.normalizedY) * (totalScaleSteps - 1),
+		);
+
+		const tangentLift = Math.round(Math.sin(sampled.tangentAngle) * 1.5);
+		const spectralLift = Math.round(normalizedFrequency * 2);
+		const curvatureLift = sampled.curvature > 0.46 ? 1 : 0;
+
+		const viewOffset = view === "disk" ? 2 : view === "companion" ? -1 : 0;
+
+		return clamp(
+			verticalContour +
+				tangentLift +
+				spectralLift +
+				curvatureLift +
+				viewOffset,
+			0,
+			totalScaleSteps - 1,
+		);
+	}
+
+	private getMidiFromScaleStep(scaleStep: number) {
+		const octave = Math.floor(scaleStep / SCALE.length);
+		const degree = SCALE[scaleStep % SCALE.length];
+
+		return ROOT_MIDI + octave * 12 + degree;
+	}
+
+	private triggerPathNote({
+		view,
 		term,
 		termIndex,
 		maxAmplitude,
@@ -377,6 +449,7 @@ export class DrawingSoundEngine {
 		strokeWidth,
 		sampled,
 	}: {
+		view: BivectorSoundView;
 		term: FourierTerm;
 		termIndex: number;
 		maxAmplitude: number;
@@ -386,113 +459,256 @@ export class DrawingSoundEngine {
 	}) {
 		if (!this.context || !this.inputGain) return;
 
-		const context = this.context;
-		const now = context.currentTime;
+		const scaleStep = this.getScaleStep({
+			sampled,
+			term,
+			maxFrequency,
+			view,
+		});
 
-		const normalizedFrequency =
-			Math.log2(1 + Math.abs(term.frequency)) /
-			Math.log2(1 + maxFrequency);
+		const midi = this.getMidiFromScaleStep(scaleStep);
+		const frequency = midiToHz(midi);
 
 		const amplitudeRatio = clamp(term.amplitude / maxAmplitude, 0, 1);
+		const orientationPan = term.frequency < 0 ? -0.07 : 0.07;
+		const pathPan = (sampled.normalizedX - 0.5) * 0.42;
+		const pan = clamp(pathPan + orientationPan, -0.42, 0.42);
 
-		// The drawn waveform/path is now a first-class musical driver:
-		// vertical contour chooses the main register,
-		// Fourier frequency gently offsets scale position,
-		// curvature adds occasional sparkle.
-		const contourStep = Math.round(
-			(1 - sampled.normalizedY) * (SCALE.length * OCTAVE_COUNT - 1),
-		);
+		if (view === "disk") {
+			this.triggerMusicalCup({
+				frequency,
+				pan,
+				amplitudeRatio,
+				curvature: sampled.curvature,
+				strokeWidth,
+			});
 
-		const spectralStep = Math.round(normalizedFrequency * 3);
-		const curvatureLift = sampled.curvature > 0.42 ? 1 : 0;
+			return;
+		}
 
-		const totalScaleSteps = SCALE.length * OCTAVE_COUNT;
-		const scaleStep = clamp(
-			contourStep + spectralStep + curvatureLift,
+		if (view === "companion") {
+			this.triggerCompanionPair({
+				scaleStep,
+				pan,
+				amplitudeRatio,
+				curvature: sampled.curvature,
+				strokeWidth,
+				isNegativeFrequency: term.frequency < 0,
+			});
+
+			return;
+		}
+
+		this.triggerRainDrum({
+			frequency,
+			pan,
+			amplitudeRatio,
+			curvature: sampled.curvature,
+			strokeWidth,
+			termIndex,
+		});
+	}
+
+	private triggerMusicalCup({
+		frequency,
+		pan,
+		amplitudeRatio,
+		curvature,
+		strokeWidth,
+	}: {
+		frequency: number;
+		pan: number;
+		amplitudeRatio: number;
+		curvature: number;
+		strokeWidth: number;
+	}) {
+		const gain = 0.008 + 0.03 * amplitudeRatio ** 0.78;
+		const attack = 0.085 + Math.min(0.045, strokeWidth * 0.003);
+		const decay = 3.25 + amplitudeRatio * 2.4 + curvature * 0.8;
+
+		this.triggerSineCluster({
+			frequency,
+			pan,
+			gain,
+			attack,
+			decay,
+			partials: [
+				{ ratio: 1, gain: 1 },
+				{ ratio: 2, gain: 0.16 },
+				{ ratio: 3, gain: 0.045 },
+			],
+			drift: 0.996,
+		});
+	}
+
+	private triggerRainDrum({
+		frequency,
+		pan,
+		amplitudeRatio,
+		curvature,
+		strokeWidth,
+		termIndex,
+	}: {
+		frequency: number;
+		pan: number;
+		amplitudeRatio: number;
+		curvature: number;
+		strokeWidth: number;
+		termIndex: number;
+	}) {
+		const gain = 0.009 + 0.038 * amplitudeRatio ** 0.76;
+		const attack = 0.018 + Math.min(0.025, strokeWidth * 0.002);
+		const decay = 0.95 + amplitudeRatio * 1.2 + curvature * 0.45;
+
+		this.triggerSineCluster({
+			frequency,
+			pan,
+			gain,
+			attack,
+			decay,
+			partials: [
+				{ ratio: 1, gain: 1 },
+				{ ratio: 2, gain: 0.12 },
+			],
+			drift: 0.992,
+		});
+
+		if (curvature > 0.32 || termIndex % 4 === 0) {
+			this.triggerSoftDroplet({
+				frequency: frequency * 2,
+				pan: clamp(pan * 1.2, -0.5, 0.5),
+				gain: gain * 0.32,
+				delaySeconds: 0.035,
+			});
+		}
+	}
+
+	private triggerCompanionPair({
+		scaleStep,
+		pan,
+		amplitudeRatio,
+		curvature,
+		strokeWidth,
+		isNegativeFrequency,
+	}: {
+		scaleStep: number;
+		pan: number;
+		amplitudeRatio: number;
+		curvature: number;
+		strokeWidth: number;
+		isNegativeFrequency: boolean;
+	}) {
+		const companionStep = clamp(
+			scaleStep + (isNegativeFrequency ? -2 : 2),
 			0,
-			totalScaleSteps - 1,
+			SCALE.length * OCTAVE_COUNT - 1,
 		);
 
-		const octave = Math.floor(scaleStep / SCALE.length);
-		const degree = SCALE[scaleStep % SCALE.length];
+		const firstFrequency = midiToHz(this.getMidiFromScaleStep(scaleStep));
+		const secondFrequency = midiToHz(
+			this.getMidiFromScaleStep(companionStep),
+		);
 
-		const midi = ROOT_MIDI + octave * 12 + degree;
-		const baseFrequency = midiToHz(midi);
+		const gain = 0.006 + 0.024 * amplitudeRatio ** 0.8;
+		const attack = 0.055 + Math.min(0.035, strokeWidth * 0.0025);
+		const decay = 2.1 + amplitudeRatio * 1.6 + curvature * 0.45;
 
-		const loudness = 0.007 + 0.034 * amplitudeRatio ** 0.75;
-		const attack = 0.045 + Math.min(0.045, strokeWidth * 0.004);
-		const decay = 2.35 + amplitudeRatio * 2.65 + sampled.curvature * 0.7;
+		this.triggerSineCluster({
+			frequency: firstFrequency,
+			pan,
+			gain,
+			attack,
+			decay,
+			partials: [
+				{ ratio: 1, gain: 1 },
+				{ ratio: 2, gain: 0.12 },
+			],
+			drift: 0.997,
+		});
 
-		const orientationPan = term.frequency < 0 ? -0.08 : 0.08;
-		const contourPan = (sampled.normalizedX - 0.5) * 0.34;
-		const pan = clamp(contourPan + orientationPan, -0.34, 0.34);
+		this.triggerSineCluster({
+			frequency: secondFrequency,
+			pan: clamp(-pan * 0.85, -0.42, 0.42),
+			gain: gain * 0.72,
+			attack: attack + 0.025,
+			decay: decay * 0.92,
+			partials: [
+				{ ratio: 1, gain: 1 },
+				{ ratio: 2, gain: 0.1 },
+			],
+			drift: 0.998,
+			delaySeconds: 0.055,
+		});
+	}
+
+	private triggerSineCluster({
+		frequency,
+		pan,
+		gain,
+		attack,
+		decay,
+		partials,
+		drift,
+		delaySeconds = 0,
+	}: {
+		frequency: number;
+		pan: number;
+		gain: number;
+		attack: number;
+		decay: number;
+		partials: SinePartial[];
+		drift: number;
+		delaySeconds?: number;
+	}) {
+		if (!this.context || !this.inputGain) return;
+
+		const context = this.context;
+		const startAt = context.currentTime + delaySeconds;
 
 		const panner = context.createStereoPanner();
 		const voiceGain = context.createGain();
 
-		panner.pan.setValueAtTime(pan, now);
+		panner.pan.setValueAtTime(pan, startAt);
 
-		voiceGain.gain.setValueAtTime(0.0001, now);
+		voiceGain.gain.setValueAtTime(0.0001, startAt);
 		voiceGain.gain.exponentialRampToValueAtTime(
-			Math.max(0.0002, loudness),
-			now + attack,
+			Math.max(0.0002, gain),
+			startAt + attack,
 		);
 		voiceGain.gain.exponentialRampToValueAtTime(
 			0.0001,
-			now + attack + decay,
+			startAt + attack + decay,
 		);
 
 		panner.connect(voiceGain);
 		voiceGain.connect(this.inputGain);
 
-		// Mostly pure harmonic partials. No chromatic phase nudging,
-		// no hard inharmonic clangs. This is intentionally glassy and soft.
-		const partials = [
-			{ ratio: 1, gain: 1 },
-			{ ratio: 2, gain: 0.22 },
-			{ ratio: 4, gain: 0.08 },
-		];
-
-		for (const [partialIndex, partial] of partials.entries()) {
+		for (const partial of partials) {
 			const oscillator = context.createOscillator();
 			const partialGain = context.createGain();
 
-			const gentleDrift =
-				partialIndex === 0
-					? 0
-					: Math.sin(termIndex + partialIndex) * 1.4;
-
 			oscillator.type = "sine";
 			oscillator.frequency.setValueAtTime(
-				baseFrequency * partial.ratio,
-				now,
+				frequency * partial.ratio,
+				startAt,
 			);
 			oscillator.frequency.exponentialRampToValueAtTime(
-				baseFrequency * partial.ratio * 0.997,
-				now + Math.min(decay, 2.2),
+				frequency * partial.ratio * drift,
+				startAt + Math.min(decay, 2.8),
 			);
-			oscillator.detune.setValueAtTime(gentleDrift, now);
+			oscillator.detune.setValueAtTime(partial.detune ?? 0, startAt);
 
-			partialGain.gain.setValueAtTime(partial.gain, now);
+			partialGain.gain.setValueAtTime(partial.gain, startAt);
 
 			oscillator.connect(partialGain);
 			partialGain.connect(panner);
 
-			oscillator.start(now);
-			oscillator.stop(now + attack + decay + 0.25);
+			oscillator.start(startAt);
+			oscillator.stop(startAt + attack + decay + 0.28);
 
 			oscillator.addEventListener("ended", () => {
 				oscillator.disconnect();
 				partialGain.disconnect();
-			});
-		}
-
-		if (sampled.curvature > 0.34 || this.noteIndex % 5 === 0) {
-			this.triggerSoftRainPing({
-				frequency: baseFrequency * 2,
-				pan,
-				gain: loudness * 0.32,
-				when: now + 0.018,
 			});
 		}
 
@@ -501,24 +717,25 @@ export class DrawingSoundEngine {
 				panner.disconnect();
 				voiceGain.disconnect();
 			},
-			(attack + decay + 0.4) * 1000,
+			(delaySeconds + attack + decay + 0.45) * 1000,
 		);
 	}
 
-	private triggerSoftRainPing({
+	private triggerSoftDroplet({
 		frequency,
 		pan,
 		gain,
-		when,
+		delaySeconds,
 	}: {
 		frequency: number;
 		pan: number;
 		gain: number;
-		when: number;
+		delaySeconds: number;
 	}) {
 		if (!this.context || !this.inputGain) return;
 
 		const context = this.context;
+		const startAt = context.currentTime + delaySeconds;
 
 		const oscillator = context.createOscillator();
 		const filter = context.createBiquadFilter();
@@ -526,32 +743,32 @@ export class DrawingSoundEngine {
 		const pingGain = context.createGain();
 
 		oscillator.type = "sine";
-		oscillator.frequency.setValueAtTime(frequency, when);
+		oscillator.frequency.setValueAtTime(frequency, startAt);
 		oscillator.frequency.exponentialRampToValueAtTime(
-			frequency * 0.72,
-			when + 0.24,
+			frequency * 0.74,
+			startAt + 0.24,
 		);
 
 		filter.type = "bandpass";
 		filter.frequency.value = frequency;
-		filter.Q.value = 5;
+		filter.Q.value = 5.5;
 
-		panner.pan.setValueAtTime(clamp(pan * 1.25, -0.45, 0.45), when);
+		panner.pan.setValueAtTime(pan, startAt);
 
-		pingGain.gain.setValueAtTime(0.0001, when);
+		pingGain.gain.setValueAtTime(0.0001, startAt);
 		pingGain.gain.exponentialRampToValueAtTime(
 			Math.max(0.0002, gain),
-			when + 0.012,
+			startAt + 0.014,
 		);
-		pingGain.gain.exponentialRampToValueAtTime(0.0001, when + 0.42);
+		pingGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.48);
 
 		oscillator.connect(filter);
 		filter.connect(panner);
 		panner.connect(pingGain);
 		pingGain.connect(this.inputGain);
 
-		oscillator.start(when);
-		oscillator.stop(when + 0.52);
+		oscillator.start(startAt);
+		oscillator.stop(startAt + 0.56);
 
 		oscillator.addEventListener("ended", () => {
 			oscillator.disconnect();

@@ -288,7 +288,7 @@ function App() {
 		void activeEngine.start();
 
 		function tickSound() {
-			activeEngine.tick(sonicStrokes);
+			activeEngine.tick(sonicStrokes, bivectorView);
 			soundFrameRef.current = requestAnimationFrame(tickSound);
 		}
 
@@ -298,10 +298,16 @@ function App() {
 			stopSoundFrame();
 			activeEngine.stop();
 		};
-	}, [isSoundEnabled, isAnimationPlaying, isAnimationMode, sonicStrokes]);
+	}, [
+		isSoundEnabled,
+		isAnimationPlaying,
+		isAnimationMode,
+		sonicStrokes,
+		bivectorView,
+	]);
 
 	return (
-		<main className="flex h-[100dvh] w-screen overflow-hidden bg-zinc-950 text-zinc-50">
+		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
 				<header className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
 					<div className="flex items-center gap-3">
