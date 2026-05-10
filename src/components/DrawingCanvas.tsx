@@ -1,40 +1,30 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { Point, Stroke } from "../types/geometry";
 
-const STROKE_COLORS = [
-	"#e84d3d", // red
-	"#2f80ed", // blue
-	"#27ae60", // green
-	"#f2c94c", // yellow
-	"#9b51e0", // purple
-	"#f2994a", // orange
-	"#56ccf2", // light blue
-	"#eb5757", // coral
-];
-
 type DrawingCanvasProps = {
 	clearSignal: number;
+	penColor: string;
+	penWidth: number;
 	onStrokesChange: (strokes: Stroke[]) => void;
 };
 
-function getNextStrokeColor(currentIndex: number) {
-	return STROKE_COLORS[(currentIndex + 1) % STROKE_COLORS.length];
-}
-
 export function DrawingCanvas({
 	clearSignal,
+	penColor,
+	penWidth,
 	onStrokesChange,
 }: DrawingCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const isDrawingRef = useRef(false);
+	const currentStrokeColorRef = useRef(penColor);
+	const currentStrokeWidthRef = useRef(penWidth);
 	const previousPointRef = useRef<Point | null>(null);
-	const strokeColorIndexRef = useRef(-1);
-	const currentStrokeColorRef = useRef(STROKE_COLORS[0]);
 	const strokesRef = useRef<Stroke[]>([]);
 	const currentStrokePointsRef = useRef<Point[]>([]);
 	const [pointerPreview, setPointerPreview] = useState<{
 		point: Point;
 		color: string;
+		width: number;
 	} | null>(null);
 
 	function getCanvasPoint(event: PointerEvent): Point {
@@ -57,7 +47,7 @@ export function DrawingCanvas({
 		if (!ctx) return;
 
 		ctx.strokeStyle = currentStrokeColorRef.current;
-		ctx.lineWidth = 4;
+		ctx.lineWidth = currentStrokeWidthRef.current;
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
 
@@ -72,12 +62,8 @@ export function DrawingCanvas({
 		if (!canvas) return;
 
 		canvas.setPointerCapture(event.pointerId);
-
-		strokeColorIndexRef.current =
-			(strokeColorIndexRef.current + 1) % STROKE_COLORS.length;
-
-		currentStrokeColorRef.current =
-			STROKE_COLORS[strokeColorIndexRef.current];
+		currentStrokeColorRef.current = penColor;
+		currentStrokeWidthRef.current = penWidth;
 
 		const point = getCanvasPoint(event);
 
@@ -88,6 +74,7 @@ export function DrawingCanvas({
 		setPointerPreview({
 			point,
 			color: currentStrokeColorRef.current,
+			width: currentStrokeWidthRef.current,
 		});
 	}
 
@@ -101,6 +88,7 @@ export function DrawingCanvas({
 		setPointerPreview({
 			point: currentPoint,
 			color: currentStrokeColorRef.current,
+			width: currentStrokeWidthRef.current,
 		});
 		currentStrokePointsRef.current.push(currentPoint);
 		const previousPoint = previousPointRef.current;
@@ -124,6 +112,7 @@ export function DrawingCanvas({
 		if (currentStrokePointsRef.current.length > 1) {
 			strokesRef.current.push({
 				color: currentStrokeColorRef.current,
+				width: currentStrokeWidthRef.current,
 				points: currentStrokePointsRef.current,
 			});
 
@@ -140,14 +129,16 @@ export function DrawingCanvas({
 
 		setPointerPreview({
 			point: getCanvasPoint(event),
-			color: getNextStrokeColor(strokeColorIndexRef.current),
+			color: penColor,
+			width: penWidth,
 		});
 	}
 
 	function handlePointerEnter(event: PointerEvent<HTMLCanvasElement>) {
 		setPointerPreview({
 			point: getCanvasPoint(event),
-			color: getNextStrokeColor(strokeColorIndexRef.current),
+			color: currentStrokeColorRef.current,
+			width: currentStrokeWidthRef.current,
 		});
 	}
 
@@ -196,6 +187,7 @@ export function DrawingCanvas({
 		onStrokesChange(
 			strokesRef.current.map(stroke => ({
 				color: stroke.color,
+				width: stroke.width,
 				points: [...stroke.points],
 			})),
 		);
@@ -223,6 +215,13 @@ export function DrawingCanvas({
 		clearCanvas();
 	}, [clearSignal]);
 
+	useEffect(() => {
+		if (isDrawingRef.current) return;
+
+		currentStrokeColorRef.current = penColor;
+		currentStrokeWidthRef.current = penWidth;
+	}, [penColor, penWidth]);
+
 	return (
 		<div className="relative h-full w-full">
 			<canvas
@@ -238,10 +237,12 @@ export function DrawingCanvas({
 
 			{pointerPreview && (
 				<div
-					className="pointer-events-none absolute h-6 w-6 rounded-full border"
+					className="pointer-events-none absolute rounded-full border"
 					style={{
 						left: pointerPreview.point.x,
 						top: pointerPreview.point.y,
+						width: Math.max(18, pointerPreview.width * 4),
+						height: Math.max(18, pointerPreview.width * 4),
 						transform: "translate(-50%, -50%)",
 						borderColor: pointerPreview.color,
 						backgroundColor: `${pointerPreview.color}33`,

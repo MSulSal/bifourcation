@@ -8,10 +8,23 @@ import { EpicycleCanvas } from "./components/EpicycleCanvas";
 
 // console.log(algebraAxiomsHold());
 
+const PEN_COLORS = [
+	"#e84d3d",
+	"#2f80ed",
+	"#27ae60",
+	"#f2c94c",
+	"#9b51e0",
+	"#f2994a",
+	"#56ccf2",
+	"#eb5757",
+];
+
 function App() {
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
 	const [isAnimating, setIsAnimating] = useState(false);
+	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
+	const [penWidth, setPenWidth] = useState(4);
 
 	const pointCount = strokes.reduce(
 		(total, stroke) => total + stroke.points.length,
@@ -53,6 +66,8 @@ function App() {
 				<section className="relative min-h-0 flex-1 bg-zinc-900">
 					<DrawingCanvas
 						clearSignal={clearSignal}
+						penColor={penColor}
+						penWidth={penWidth}
 						onStrokesChange={setStrokes}
 					/>
 
@@ -112,6 +127,40 @@ function App() {
 								? "No Fourier terms"
 								: `${fourierTerms.length} Fourier terms · largest radius ${largestTerm.amplitude.toFixed(1)}`}
 						</div>
+
+						<div className="flex shrink-0 items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2">
+							{PEN_COLORS.map(color => (
+								<button
+									key={color}
+									className="h-7 w-7 rounded-full border transition"
+									style={{
+										backgroundColor: color,
+										borderColor:
+											color === penColor
+												? "#f4f4f5"
+												: "transparent",
+									}}
+									onClick={() => setPenColor(color)}
+									aria-label={`Select pen color ${color}`}
+								/>
+							))}
+						</div>
+
+						<label className="flex shrink-0 items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
+							<span>Width</span>
+							<input
+								type="range"
+								min={2}
+								max={12}
+								value={penWidth}
+								onChange={event =>
+									setPenWidth(Number(event.target.value))
+								}
+							/>
+							<span className="w-6 text-right text-zinc-300">
+								{penWidth}
+							</span>
+						</label>
 					</div>
 				</aside>
 			</section>
