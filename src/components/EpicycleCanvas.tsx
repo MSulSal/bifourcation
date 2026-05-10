@@ -21,6 +21,11 @@ type EpicycleCanvasProps = {
 const STROKE_DURATION_MS = 6500;
 const MAX_ARROWED_EPICYCLES = 18;
 
+// Use a value just before the loop wraps back to 0.
+// For Fourier reconstruction, progress 1 and progress 0 are effectively the same,
+// so 0.999 preserves the "just-finished" visual state better.
+const COMPLETED_STROKE_PROGRESS = 0.999;
+
 export function EpicycleCanvas({
 	strokes,
 	isActive,
@@ -158,13 +163,14 @@ export function EpicycleCanvas({
 		frequency: number,
 		color: string,
 		index: number,
+		opacity = 1,
 	) {
 		if (radius < 8 || index >= MAX_ARROWED_EPICYCLES || frequency === 0)
 			return;
 
 		const direction = frequency >= 0 ? 1 : -1;
 		const arrowSize = Math.max(4, Math.min(9, radius * 0.12));
-		const alpha = Math.max(0.15, 0.55 - index * 0.02);
+		const alpha = Math.max(0.15, 0.55 - index * 0.02) * opacity;
 
 		const firstAngle = angle;
 		const secondAngle = angle + Math.PI;
@@ -196,6 +202,94 @@ export function EpicycleCanvas({
 		);
 	}
 
+	function drawEpicycleSet(
+		stroke: AnimatedStroke,
+		progress: number,
+		options: {
+			opacity?: number;
+			showTip?: boolean;
+		} = {},
+	) {
+		const canvas = canvasRef.current;
+		if (!canvas) return null;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return null;
+
+		const opacity = options.opacity ?? 1;
+		const showTip = options.showTip ?? true;
+		const activeTermLimit = Math.min(termLimit, stroke.terms.length);
+
+		const { epicycles, point } = evaluateFourierTerms(
+			stroke.terms,
+			progress,
+			activeTermLimit,
+		);
+
+		for (const [index, epicycle] of epicycles.entries()) {
+			const center = getCanvasPoint(epicycle.center);
+			const tip = getCanvasPoint(epicycle.tip);
+			const angle =
+				2 * Math.PI * epicycle.frequency * progress + epicycle.phase;
+
+			ctx.strokeStyle = stroke.color;
+			ctx.globalAlpha = 0.16 * opacity;
+			ctx.lineWidth = 1;
+
+			ctx.beginPath();
+			ctx.arc(center.x, center.y, epicycle.radius, 0, Math.PI * 2);
+			ctx.stroke();
+
+			drawBivectorArrowPair(
+				center,
+				epicycle.radius,
+				angle,
+				epicycle.frequency,
+				stroke.color,
+				index,
+				opacity,
+			);
+
+			ctx.globalAlpha = 0.55 * opacity;
+			ctx.lineWidth = Math.max(1, stroke.width * 0.35);
+
+			ctx.beginPath();
+			ctx.moveTo(center.x, center.y);
+			ctx.lineTo(tip.x, tip.y);
+			ctx.stroke();
+
+			ctx.globalAlpha = 1;
+		}
+
+		if (showTip) {
+			const currentPoint = getCanvasPoint(point);
+
+			ctx.globalAlpha = opacity;
+			ctx.fillStyle = stroke.color;
+			ctx.beginPath();
+			ctx.arc(
+				currentPoint.x,
+				currentPoint.y,
+				Math.max(4, stroke.width),
+				0,
+				Math.PI * 2,
+			);
+			ctx.fill();
+			ctx.globalAlpha = 1;
+		}
+
+		return point;
+	}
+
+	function drawCompletedStroke(stroke: AnimatedStroke) {
+		drawPath(stroke.path, stroke.color, stroke.width, 0.95);
+
+		drawEpicycleSet(stroke, COMPLETED_STROKE_PROGRESS, {
+			opacity: 0.72,
+			showTip: false,
+		});
+	}
+
 	function drawFrame(strokeIndex: number, progress: number) {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
@@ -208,12 +302,7 @@ export function EpicycleCanvas({
 
 		for (let index = 0; index < strokeIndex; index += 1) {
 			const completedStroke = strokes[index];
-			drawPath(
-				completedStroke.path,
-				completedStroke.color,
-				completedStroke.width,
-				0.95,
-			);
+			drawCompletedStroke(completedStroke);
 		}
 
 		const activeStroke = strokes[strokeIndex];
@@ -223,48 +312,13 @@ export function EpicycleCanvas({
 			return;
 		}
 
-		const activeTermLimit = Math.min(termLimit, activeStroke.terms.length);
+		const point = drawEpicycleSet(activeStroke, progress, {
+			opacity: 1,
+			showTip: true,
+		});
 
-		const { epicycles, point } = evaluateFourierTerms(
-			activeStroke.terms,
-			progress,
-			activeTermLimit,
-		);
-
-		traceRef.current.push(point);
-
-		for (const [index, epicycle] of epicycles.entries()) {
-			const center = getCanvasPoint(epicycle.center);
-			const tip = getCanvasPoint(epicycle.tip);
-			const angle =
-				2 * Math.PI * epicycle.frequency * progress + epicycle.phase;
-
-			ctx.strokeStyle = activeStroke.color;
-			ctx.globalAlpha = 0.16;
-			ctx.lineWidth = 1;
-
-			ctx.beginPath();
-			ctx.arc(center.x, center.y, epicycle.radius, 0, Math.PI * 2);
-			ctx.stroke();
-
-			drawBivectorArrowPair(
-				center,
-				epicycle.radius,
-				angle,
-				epicycle.frequency,
-				activeStroke.color,
-				index,
-			);
-
-			ctx.globalAlpha = 0.55;
-			ctx.lineWidth = Math.max(1, activeStroke.width * 0.35);
-
-			ctx.beginPath();
-			ctx.moveTo(center.x, center.y);
-			ctx.lineTo(tip.x, tip.y);
-			ctx.stroke();
-
-			ctx.globalAlpha = 1;
+		if (point) {
+			traceRef.current.push(point);
 		}
 
 		drawTrace(
@@ -273,19 +327,6 @@ export function EpicycleCanvas({
 			Math.max(2, activeStroke.width),
 			1,
 		);
-
-		const currentPoint = getCanvasPoint(point);
-
-		ctx.fillStyle = activeStroke.color;
-		ctx.beginPath();
-		ctx.arc(
-			currentPoint.x,
-			currentPoint.y,
-			Math.max(4, activeStroke.width),
-			0,
-			Math.PI * 2,
-		);
-		ctx.fill();
 
 		lastDrawnFrameRef.current = {
 			strokeIndex,
