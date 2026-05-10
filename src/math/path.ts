@@ -1,6 +1,6 @@
 import type { Point } from "../types/geometry";
 
-export function distance(a: Point, b: Point): number {
+export function distance(a: Point, b: Point) {
 	const dx = b.x - a.x;
 	const dy = b.y - a.y;
 
@@ -17,8 +17,8 @@ export function lerpPoint(a: Point, b: Point, t: number): Point {
 export function getPathLength(points: Point[]) {
 	let total = 0;
 
-	for (let i = 1; i < points.length; i++) {
-		total += distance(points[i - 1], points[i]);
+	for (let index = 1; index < points.length; index += 1) {
+		total += distance(points[index - 1], points[index]);
 	}
 
 	return total;
@@ -38,39 +38,38 @@ export function resamplePath(points: Point[], sampleCount: number): Point[] {
 	const spacing = totalLength / (sampleCount - 1);
 	const resampled: Point[] = [points[0]];
 
-	let currentSegmentStart = points[0];
-	let currentSegmentIndex = 1;
-	let distanceIntoSegment = 0;
+	let distanceAtSegmentStart = 0;
+	let nextSampleDistance = spacing;
 
-	while (
-		resampled.length < sampleCount &&
-		currentSegmentIndex < points.length
+	for (
+		let segmentEndIndex = 1;
+		segmentEndIndex < points.length && resampled.length < sampleCount - 1;
+		segmentEndIndex += 1
 	) {
-		const currentSegmentEnd = points[currentSegmentIndex];
-		const segmentLength = distance(currentSegmentStart, currentSegmentEnd);
+		const segmentStart = points[segmentEndIndex - 1];
+		const segmentEnd = points[segmentEndIndex];
+		const segmentLength = distance(segmentStart, segmentEnd);
 
-		const remainingSegmentLength = segmentLength - distanceIntoSegment;
-		const distanceToNextSample = spacing;
+		if (segmentLength === 0) continue;
 
-		if (remainingSegmentLength >= distanceToNextSample) {
-			const t =
-				(distanceIntoSegment + distanceToNextSample) / segmentLength;
-			const nextPoint = lerpPoint(
-				currentSegmentStart,
-				currentSegmentEnd,
-				t,
-			);
+		const distanceAtSegmentEnd = distanceAtSegmentStart + segmentLength;
 
-			resampled.push(nextPoint);
+		while (
+			nextSampleDistance <= distanceAtSegmentEnd &&
+			resampled.length < sampleCount - 1
+		) {
+			const distanceIntoSegment =
+				nextSampleDistance - distanceAtSegmentStart;
+			const t = distanceIntoSegment / segmentLength;
 
-			currentSegmentStart = nextPoint;
-			distanceIntoSegment = 0;
-		} else {
-			currentSegmentStart = currentSegmentEnd;
-			currentSegmentIndex += 1;
-			distanceIntoSegment = 0;
+			resampled.push(lerpPoint(segmentStart, segmentEnd, t));
+			nextSampleDistance += spacing;
 		}
+
+		distanceAtSegmentStart = distanceAtSegmentEnd;
 	}
+
+	resampled.push(points[points.length - 1]);
 
 	while (resampled.length < sampleCount) {
 		resampled.push(points[points.length - 1]);
