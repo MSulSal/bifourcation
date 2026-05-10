@@ -22,8 +22,8 @@ type EpicycleCanvasProps = {
 };
 
 const STROKE_DURATION_MS = 6500;
-const MAX_VISIBLE_BLADES = 64;
-const MAX_ARROWED_BLADES = 24;
+const MAX_VISIBLE_COMPONENTS = 64;
+const MAX_ARROWED_COMPONENTS = 24;
 
 const COMPLETED_STROKE_PROGRESS = 0.999;
 
@@ -185,6 +185,19 @@ export function EpicycleCanvas({
 		ctx.globalAlpha = 1;
 	}
 
+	function drawTranslationComponent(
+		center: Point,
+		tip: Point,
+		color: string,
+		strokeWidth: number,
+		index: number,
+		opacity: number,
+	) {
+		const alpha = Math.max(0.08, 0.35 - index * 0.004) * opacity;
+
+		drawLine(center, tip, color, Math.max(1, strokeWidth * 0.32), alpha);
+	}
+
 	function drawBladeMode(
 		center: Point,
 		tip: Point,
@@ -202,12 +215,22 @@ export function EpicycleCanvas({
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
 
-		const bladeThickness = Math.max(5, Math.min(22, length * 0.16));
-		const halfOffset = {
-			x: companionUnit.x * bladeThickness * 0.5,
-			y: companionUnit.y * bladeThickness * 0.5,
+		// Accurate blade geometry:
+		// component vector r has length |r|.
+		// companion vector e₁e₂r has the same length |r|.
+		// The parallelogram area is therefore |r|².
+		const companionVector = {
+			x: companionUnit.x * length,
+			y: companionUnit.y * length,
 		};
 
+		const halfOffset = {
+			x: companionVector.x * 0.5,
+			y: companionVector.y * 0.5,
+		};
+
+		// This parallelogram is translated so the component vector remains visually
+		// centered, but its spanning vectors are still r and e₁e₂r.
 		const p0 = {
 			x: center.x - halfOffset.x,
 			y: center.y - halfOffset.y,
@@ -228,9 +251,10 @@ export function EpicycleCanvas({
 			y: center.y + halfOffset.y,
 		};
 
-		const bladeAlpha = Math.max(0.035, 0.18 - index * 0.0025) * opacity;
-		const outlineAlpha = Math.max(0.08, 0.35 - index * 0.004) * opacity;
+		const bladeAlpha = Math.max(0.012, 0.075 - index * 0.001) * opacity;
+		const outlineAlpha = Math.max(0.045, 0.24 - index * 0.0025) * opacity;
 		const vectorAlpha = Math.max(0.18, 0.72 - index * 0.006) * opacity;
+		const companionAlpha = Math.max(0.12, vectorAlpha * 0.58) * opacity;
 
 		ctx.globalAlpha = bladeAlpha;
 		ctx.fillStyle = color;
@@ -266,8 +290,8 @@ export function EpicycleCanvas({
 		);
 
 		const companionTip = {
-			x: center.x + companionUnit.x * bladeThickness,
-			y: center.y + companionUnit.y * bladeThickness,
+			x: center.x + companionVector.x,
+			y: center.y + companionVector.y,
 		};
 
 		drawLine(
@@ -275,15 +299,15 @@ export function EpicycleCanvas({
 			companionTip,
 			color,
 			Math.max(1, strokeWidth * 0.28),
-			Math.max(0.12, vectorAlpha * 0.6),
+			companionAlpha,
 		);
 
-		if (index >= MAX_ARROWED_BLADES || frequency === 0) return;
+		if (index >= MAX_ARROWED_COMPONENTS || frequency === 0) return;
 
 		const componentAngle = Math.atan2(tip.y - center.y, tip.x - center.x);
-		const companionAngle = Math.atan2(companionUnit.y, companionUnit.x);
-		const arrowSize = Math.max(4, Math.min(9, length * 0.09));
-		const arrowAlpha = Math.max(0.14, 0.58 - index * 0.018) * opacity;
+		const companionAngle = Math.atan2(companionVector.y, companionVector.x);
+		const arrowSize = Math.max(4, Math.min(9, length * 0.075));
+		const arrowAlpha = Math.max(0.12, 0.5 - index * 0.016) * opacity;
 
 		const topEdgeMidpoint = {
 			x: (p2.x + p3.x) * 0.5,
@@ -339,21 +363,27 @@ export function EpicycleCanvas({
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
 
-		const diskAlpha = Math.max(0.018, 0.105 - index * 0.0014) * opacity;
+		// Accurate circular blade area:
+		// blade area from r ∧ e₁e₂r is |r|².
+		// For a circular disk with the same area, πR² = |r|²,
+		// so R = |r| / √π.
+		const diskRadius = length / Math.sqrt(Math.PI);
+
+		const diskAlpha = Math.max(0.018, 0.11 - index * 0.0014) * opacity;
 		const outlineAlpha = Math.max(0.06, 0.28 - index * 0.003) * opacity;
 		const vectorAlpha = Math.max(0.18, 0.74 - index * 0.006) * opacity;
 
 		ctx.globalAlpha = diskAlpha;
 		ctx.fillStyle = color;
 		ctx.beginPath();
-		ctx.arc(center.x, center.y, length, 0, Math.PI * 2);
+		ctx.arc(center.x, center.y, diskRadius, 0, Math.PI * 2);
 		ctx.fill();
 
 		ctx.globalAlpha = outlineAlpha;
 		ctx.strokeStyle = color;
 		ctx.lineWidth = 1;
 		ctx.beginPath();
-		ctx.arc(center.x, center.y, length, 0, Math.PI * 2);
+		ctx.arc(center.x, center.y, diskRadius, 0, Math.PI * 2);
 		ctx.stroke();
 
 		ctx.globalAlpha = 1;
@@ -366,7 +396,7 @@ export function EpicycleCanvas({
 			vectorAlpha,
 		);
 
-		if (index >= MAX_ARROWED_BLADES || frequency === 0) return;
+		if (index >= MAX_ARROWED_COMPONENTS || frequency === 0) return;
 
 		const direction = frequency >= 0 ? 1 : -1;
 		const angle = Math.atan2(tip.y - center.y, tip.x - center.x);
@@ -374,17 +404,17 @@ export function EpicycleCanvas({
 		const tangentAngle = angle + direction * Math.PI * 0.5;
 		const oppositeTangentAngle = oppositeAngle + direction * Math.PI * 0.5;
 
-		const arrowSize = Math.max(4, Math.min(9, length * 0.08));
+		const arrowSize = Math.max(4, Math.min(9, diskRadius * 0.12));
 		const arrowAlpha = Math.max(0.14, 0.55 - index * 0.018) * opacity;
 
 		const firstPoint = {
-			x: center.x + Math.cos(angle) * length,
-			y: center.y + Math.sin(angle) * length,
+			x: center.x + Math.cos(angle) * diskRadius,
+			y: center.y + Math.sin(angle) * diskRadius,
 		};
 
 		const secondPoint = {
-			x: center.x + Math.cos(oppositeAngle) * length,
-			y: center.y + Math.sin(oppositeAngle) * length,
+			x: center.x + Math.cos(oppositeAngle) * diskRadius,
+			y: center.y + Math.sin(oppositeAngle) * diskRadius,
 		};
 
 		drawArrowhead(
@@ -416,8 +446,10 @@ export function EpicycleCanvas({
 		index: number,
 		opacity: number,
 	) {
-		if (index >= MAX_VISIBLE_BLADES) return;
+		if (index >= MAX_VISIBLE_COMPONENTS) return;
 
+		// Accurate companion geometry:
+		// |e₁e₂r| = |r|.
 		const companionTip = {
 			x: center.x + companionUnit.x * length,
 			y: center.y + companionUnit.y * length,
@@ -445,7 +477,7 @@ export function EpicycleCanvas({
 
 		drawLine(tip, companionTip, color, 1, bridgeAlpha);
 
-		if (index >= MAX_ARROWED_BLADES) return;
+		if (index >= MAX_ARROWED_COMPONENTS) return;
 
 		const componentAngle = Math.atan2(tip.y - center.y, tip.x - center.x);
 		const companionAngle = Math.atan2(
@@ -486,7 +518,20 @@ export function EpicycleCanvas({
 		const dy = tip.y - center.y;
 		const length = Math.hypot(dx, dy);
 
-		if (length < 4 || index >= MAX_VISIBLE_BLADES) return;
+		if (length < 4 || index >= MAX_VISIBLE_COMPONENTS) return;
+
+		if (frequency === 0) {
+			drawTranslationComponent(
+				center,
+				tip,
+				color,
+				strokeWidth,
+				index,
+				opacity,
+			);
+
+			return;
+		}
 
 		const orientation = frequency >= 0 ? 1 : -1;
 
