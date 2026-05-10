@@ -184,7 +184,7 @@ function App() {
 			try {
 				await navigator.share({
 					title: "Bifourcation",
-					text: "Fourier epicycles through geometric algebra.",
+					text: "Fourier through oriented planes.",
 					files: [file],
 				});
 
@@ -218,7 +218,7 @@ function App() {
 					</div>
 
 					<div className="w-fit rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-medium text-zinc-300">
-						Fourier × Bivectors
+						Fourier × Oriented Planes
 					</div>
 				</header>
 
@@ -355,6 +355,38 @@ function App() {
 											backgroundColor: penColor,
 										}}
 									/>
+								</div>
+							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 text-sm text-zinc-300 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Plane
+								</p>
+
+								<div className="space-y-2 leading-5 text-zinc-400">
+									<p>
+										<span className="text-zinc-100">
+											e₁
+										</span>{" "}
+										is horizontal.
+										<br />
+										<span className="text-zinc-100">
+											e₂
+										</span>{" "}
+										is vertical.
+									</p>
+
+									<p>
+										<span className="text-zinc-100">
+											e₁e₂
+										</span>{" "}
+										is oriented area in the drawing plane.
+									</p>
+
+									<p className="text-zinc-500">
+										Rotating blades replace complex-number
+										circles.
+									</p>
 								</div>
 							</section>
 						</div>

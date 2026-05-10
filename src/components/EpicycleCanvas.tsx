@@ -19,7 +19,8 @@ type EpicycleCanvasProps = {
 };
 
 const STROKE_DURATION_MS = 6500;
-const MAX_ARROWED_EPICYCLES = 18;
+const MAX_VISIBLE_BLADES = 64;
+const MAX_ARROWED_BLADES = 24;
 
 // Use a value just before the loop wraps back to 0.
 // For Fourier reconstruction, progress 1 and progress 0 are effectively the same,
@@ -156,53 +157,185 @@ export function EpicycleCanvas({
 		ctx.restore();
 	}
 
-	function drawBivectorArrowPair(
+	function drawLine(
+		from: Point,
+		to: Point,
+		color: string,
+		width: number,
+		alpha: number,
+	) {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		ctx.globalAlpha = alpha;
+		ctx.strokeStyle = color;
+		ctx.lineWidth = width;
+		ctx.lineCap = "round";
+		ctx.lineJoin = "round";
+
+		ctx.beginPath();
+		ctx.moveTo(from.x, from.y);
+		ctx.lineTo(to.x, to.y);
+		ctx.stroke();
+
+		ctx.globalAlpha = 1;
+	}
+
+	function drawOrientedBlade(
 		center: Point,
-		radius: number,
-		angle: number,
+		tip: Point,
 		frequency: number,
 		color: string,
+		strokeWidth: number,
 		index: number,
 		opacity = 1,
 	) {
-		if (radius < 8 || index >= MAX_ARROWED_EPICYCLES || frequency === 0)
-			return;
+		const canvas = canvasRef.current;
+		if (!canvas) return;
 
-		const direction = frequency >= 0 ? 1 : -1;
-		const arrowSize = Math.max(4, Math.min(9, radius * 0.12));
-		const alpha = Math.max(0.15, 0.55 - index * 0.02) * opacity;
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
 
-		const firstAngle = angle;
-		const secondAngle = angle + Math.PI;
+		const dx = tip.x - center.x;
+		const dy = tip.y - center.y;
+		const length = Math.hypot(dx, dy);
 
-		const firstX = center.x + Math.cos(firstAngle) * radius;
-		const firstY = center.y + Math.sin(firstAngle) * radius;
+		if (length < 4 || index >= MAX_VISIBLE_BLADES) return;
 
-		const secondX = center.x + Math.cos(secondAngle) * radius;
-		const secondY = center.y + Math.sin(secondAngle) * radius;
+		const orientation = frequency >= 0 ? 1 : -1;
 
-		const firstTangentAngle = firstAngle + direction * Math.PI * 0.5;
-		const secondTangentAngle = secondAngle + direction * Math.PI * 0.5;
+		// This is the visible e₁e₂ action: rotate the component vector by 90°
+		// inside the drawing plane. The sign flips with frequency orientation.
+		const companionUnit = {
+			x: orientation * (-dy / length),
+			y: orientation * (dx / length),
+		};
 
-		drawArrowhead(
-			firstX,
-			firstY,
-			firstTangentAngle,
+		const bladeThickness = Math.max(5, Math.min(22, length * 0.16));
+		const halfOffset = {
+			x: companionUnit.x * bladeThickness * 0.5,
+			y: companionUnit.y * bladeThickness * 0.5,
+		};
+
+		const p0 = {
+			x: center.x - halfOffset.x,
+			y: center.y - halfOffset.y,
+		};
+
+		const p1 = {
+			x: tip.x - halfOffset.x,
+			y: tip.y - halfOffset.y,
+		};
+
+		const p2 = {
+			x: tip.x + halfOffset.x,
+			y: tip.y + halfOffset.y,
+		};
+
+		const p3 = {
+			x: center.x + halfOffset.x,
+			y: center.y + halfOffset.y,
+		};
+
+		const bladeAlpha = Math.max(0.035, 0.18 - index * 0.0025) * opacity;
+		const outlineAlpha = Math.max(0.08, 0.35 - index * 0.004) * opacity;
+		const vectorAlpha = Math.max(0.18, 0.72 - index * 0.006) * opacity;
+
+		ctx.globalAlpha = bladeAlpha;
+		ctx.fillStyle = color;
+
+		ctx.beginPath();
+		ctx.moveTo(p0.x, p0.y);
+		ctx.lineTo(p1.x, p1.y);
+		ctx.lineTo(p2.x, p2.y);
+		ctx.lineTo(p3.x, p3.y);
+		ctx.closePath();
+		ctx.fill();
+
+		ctx.globalAlpha = outlineAlpha;
+		ctx.strokeStyle = color;
+		ctx.lineWidth = 1;
+
+		ctx.beginPath();
+		ctx.moveTo(p0.x, p0.y);
+		ctx.lineTo(p1.x, p1.y);
+		ctx.lineTo(p2.x, p2.y);
+		ctx.lineTo(p3.x, p3.y);
+		ctx.closePath();
+		ctx.stroke();
+
+		ctx.globalAlpha = 1;
+
+		drawLine(
+			center,
+			tip,
 			color,
-			arrowSize,
-			alpha,
+			Math.max(1, strokeWidth * 0.4),
+			vectorAlpha,
 		);
+
+		const companionTip = {
+			x: center.x + companionUnit.x * bladeThickness,
+			y: center.y + companionUnit.y * bladeThickness,
+		};
+
+		drawLine(
+			center,
+			companionTip,
+			color,
+			Math.max(1, strokeWidth * 0.28),
+			Math.max(0.12, vectorAlpha * 0.6),
+		);
+
+		if (index >= MAX_ARROWED_BLADES || frequency === 0) return;
+
+		const componentAngle = Math.atan2(dy, dx);
+		const companionAngle = Math.atan2(companionUnit.y, companionUnit.x);
+		const arrowSize = Math.max(4, Math.min(9, length * 0.09));
+		const arrowAlpha = Math.max(0.14, 0.58 - index * 0.018) * opacity;
+
+		const topEdgeMidpoint = {
+			x: (p2.x + p3.x) * 0.5,
+			y: (p2.y + p3.y) * 0.5,
+		};
+
+		const bottomEdgeMidpoint = {
+			x: (p0.x + p1.x) * 0.5,
+			y: (p0.y + p1.y) * 0.5,
+		};
+
 		drawArrowhead(
-			secondX,
-			secondY,
-			secondTangentAngle,
+			topEdgeMidpoint.x,
+			topEdgeMidpoint.y,
+			componentAngle,
 			color,
 			arrowSize,
-			alpha,
+			arrowAlpha,
+		);
+
+		drawArrowhead(
+			bottomEdgeMidpoint.x,
+			bottomEdgeMidpoint.y,
+			componentAngle + Math.PI,
+			color,
+			arrowSize,
+			arrowAlpha,
+		);
+
+		drawArrowhead(
+			companionTip.x,
+			companionTip.y,
+			companionAngle,
+			color,
+			arrowSize * 0.85,
+			arrowAlpha * 0.8,
 		);
 	}
 
-	function drawEpicycleSet(
+	function drawBladeSet(
 		stroke: AnimatedStroke,
 		progress: number,
 		options: {
@@ -229,36 +362,16 @@ export function EpicycleCanvas({
 		for (const [index, epicycle] of epicycles.entries()) {
 			const center = getCanvasPoint(epicycle.center);
 			const tip = getCanvasPoint(epicycle.tip);
-			const angle =
-				2 * Math.PI * epicycle.frequency * progress + epicycle.phase;
 
-			ctx.strokeStyle = stroke.color;
-			ctx.globalAlpha = 0.16 * opacity;
-			ctx.lineWidth = 1;
-
-			ctx.beginPath();
-			ctx.arc(center.x, center.y, epicycle.radius, 0, Math.PI * 2);
-			ctx.stroke();
-
-			drawBivectorArrowPair(
+			drawOrientedBlade(
 				center,
-				epicycle.radius,
-				angle,
+				tip,
 				epicycle.frequency,
 				stroke.color,
+				stroke.width,
 				index,
 				opacity,
 			);
-
-			ctx.globalAlpha = 0.55 * opacity;
-			ctx.lineWidth = Math.max(1, stroke.width * 0.35);
-
-			ctx.beginPath();
-			ctx.moveTo(center.x, center.y);
-			ctx.lineTo(tip.x, tip.y);
-			ctx.stroke();
-
-			ctx.globalAlpha = 1;
 		}
 
 		if (showTip) {
@@ -284,7 +397,7 @@ export function EpicycleCanvas({
 	function drawCompletedStroke(stroke: AnimatedStroke) {
 		drawPath(stroke.path, stroke.color, stroke.width, 0.95);
 
-		drawEpicycleSet(stroke, COMPLETED_STROKE_PROGRESS, {
+		drawBladeSet(stroke, COMPLETED_STROKE_PROGRESS, {
 			opacity: 0.72,
 			showTip: false,
 		});
@@ -312,7 +425,7 @@ export function EpicycleCanvas({
 			return;
 		}
 
-		const point = drawEpicycleSet(activeStroke, progress, {
+		const point = drawBladeSet(activeStroke, progress, {
 			opacity: 1,
 			showTip: true,
 		});
