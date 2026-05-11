@@ -26,7 +26,8 @@ const MAX_VISIBLE_COMPONENTS = 64;
 const MAX_ARROWED_COMPONENTS = 24;
 const MAX_LABELED_COMPONENTS = 10;
 
-const COMPLETED_STROKE_PROGRESS = 0.999;
+const COMPLETED_STROKE_PROGRESS = 1;
+const COMPLETED_RECONSTRUCTION_SAMPLES = 384;
 
 export function RotorCanvas({
 	strokes,
@@ -40,6 +41,8 @@ export function RotorCanvas({
 	const startedAtRef = useRef<number | null>(null);
 	const traceRef = useRef<Multivector[]>([]);
 	const activeStrokeIndexRef = useRef(0);
+	const reconstructedPathCacheRef = useRef<Map<string, Point[]>>(new Map());
+	const completedTraceCacheRef = useRef<Map<string, Point[]>>(new Map());
 	const lastDrawnFrameRef = useRef<{
 		strokeIndex: number;
 		progress: number;
@@ -88,6 +91,90 @@ export function RotorCanvas({
 			x: value.e1,
 			y: value.e2,
 		};
+	}
+
+	function getDistance(a: Point, b: Point) {
+		return Math.hypot(b.x - a.x, b.y - a.y);
+	}
+
+	function isLikelyClosedStroke(stroke: AnimatedStroke) {
+		if (stroke.path.length < 3) return false;
+
+		const first = stroke.path[0];
+		const last = stroke.path[stroke.path.length - 1];
+		const closingDistance = getDistance(first, last);
+
+		const xs = stroke.path.map(point => point.x);
+		const ys = stroke.path.map(point => point.y);
+		const width = Math.max(...xs) - Math.min(...xs);
+		const height = Math.max(...ys) - Math.min(...ys);
+		const diagonal = Math.hypot(width, height);
+
+		const threshold = Math.max(10, stroke.width * 2.5, diagonal * 0.025);
+
+		return closingDistance <= threshold;
+	}
+
+	function getStrokeProgressEnd(stroke: AnimatedStroke) {
+		if (stroke.path.length <= 1) return 1;
+		if (isLikelyClosedStroke(stroke)) return 1;
+
+		return (stroke.path.length - 1) / stroke.path.length;
+	}
+
+	function getVisibleProgress(stroke: AnimatedStroke, progress: number) {
+		return (
+			Math.min(1, Math.max(0, progress)) * getStrokeProgressEnd(stroke)
+		);
+	}
+
+	function cacheCompletedTrace(stroke: AnimatedStroke | undefined) {
+		if (!stroke || traceRef.current.length < 2) return;
+
+		completedTraceCacheRef.current.set(
+			stroke.id,
+			traceRef.current.map(getCanvasPoint),
+		);
+	}
+
+	function getCompletedReconstructionPath(stroke: AnimatedStroke) {
+		const activeTermLimit = Math.min(termLimit, stroke.terms.length);
+		const sampleCount = Math.max(
+			COMPLETED_RECONSTRUCTION_SAMPLES,
+			stroke.path.length,
+		);
+		const isClosed = isLikelyClosedStroke(stroke);
+		const progressEnd = getStrokeProgressEnd(stroke);
+
+		const cacheKey = `${stroke.id}-${activeTermLimit}-${sampleCount}-${progressEnd}`;
+
+		const cached = reconstructedPathCacheRef.current.get(cacheKey);
+		if (cached) return cached;
+
+		const reconstructedPath: Point[] = [];
+
+		for (let index = 0; index < sampleCount; index += 1) {
+			const normalizedProgress = isClosed
+				? index / sampleCount
+				: index / Math.max(1, sampleCount - 1);
+
+			const progress = normalizedProgress * progressEnd;
+			const { point } = evaluateFourierTerms(
+				stroke.terms,
+				progress,
+				activeTermLimit,
+			);
+
+			reconstructedPath.push(getCanvasPoint(point));
+		}
+
+		if (isClosed && reconstructedPath.length > 1) {
+			reconstructedPath.push(reconstructedPath[0]);
+		}
+
+		reconstructedPathCacheRef.current.set(cacheKey, reconstructedPath);
+
+		return reconstructedPath;
 	}
 
 	function drawPath(
@@ -752,7 +839,7 @@ export function RotorCanvas({
 		);
 	}
 
-	function drawBladeSet(
+	function drawRotorSet(
 		stroke: AnimatedStroke,
 		progress: number,
 		options: {
@@ -769,10 +856,11 @@ export function RotorCanvas({
 		const opacity = options.opacity ?? 1;
 		const showTip = options.showTip ?? true;
 		const activeTermLimit = Math.min(termLimit, stroke.terms.length);
+		const visibleProgress = getVisibleProgress(stroke, progress);
 
 		const { rotors, point } = evaluateFourierTerms(
 			stroke.terms,
-			progress,
+			visibleProgress,
 			activeTermLimit,
 		);
 
@@ -826,9 +914,27 @@ export function RotorCanvas({
 	}
 
 	function drawCompletedStroke(stroke: AnimatedStroke) {
-		drawPath(stroke.path, stroke.color, stroke.width, 0.95);
+		const completedTrace = completedTraceCacheRef.current.get(stroke.id);
 
-		drawBladeSet(stroke, COMPLETED_STROKE_PROGRESS, {
+		if (completedTrace && completedTrace.length >= 2) {
+			drawPath(
+				completedTrace,
+				stroke.color,
+				Math.max(2, stroke.width),
+				0.95,
+			);
+		} else {
+			const reconstructedPath = getCompletedReconstructionPath(stroke);
+
+			drawPath(
+				reconstructedPath,
+				stroke.color,
+				Math.max(2, stroke.width),
+				0.95,
+			);
+		}
+
+		drawRotorSet(stroke, COMPLETED_STROKE_PROGRESS, {
 			opacity: 0.72,
 			showTip: false,
 		});
@@ -856,7 +962,7 @@ export function RotorCanvas({
 			return;
 		}
 
-		const point = drawBladeSet(activeStroke, progress, {
+		const point = drawRotorSet(activeStroke, progress, {
 			opacity: 1,
 			showTip: true,
 		});
@@ -906,6 +1012,11 @@ export function RotorCanvas({
 			resizeObserver.disconnect();
 		};
 	}, [isActive, strokes, termLimit, bivectorView]);
+
+	useEffect(() => {
+		reconstructedPathCacheRef.current.clear();
+		completedTraceCacheRef.current.clear();
+	}, [strokes, termLimit]);
 
 	useEffect(() => {
 		if (!isActive || strokes.length === 0) {
@@ -961,6 +1072,7 @@ export function RotorCanvas({
 				strokeIndex !== activeStrokeIndexRef.current ||
 				progress < 0.01
 			) {
+				cacheCompletedTrace(strokes[activeStrokeIndexRef.current]);
 				traceRef.current = [];
 				activeStrokeIndexRef.current = strokeIndex;
 			}
