@@ -17,6 +17,17 @@ const PEN_COLORS = [
 	"#eb5757",
 ];
 
+const DEFAULT_PEN_COLOR = PEN_COLORS[0];
+const DEFAULT_PEN_WIDTH = 4;
+const DEFAULT_BIVECTOR_VIEW: BivectorView = "blade";
+
+const STORAGE_KEYS = {
+	penColor: "bifourcation.penColor",
+	penWidth: "bifourcation.penWidth",
+	bivectorView: "bifourcation.bivectorView",
+	soundEnabled: "bifourcation.soundEnabled",
+} as const;
+
 const ACTIVE_BUTTON_CLASS =
 	"shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400";
 
@@ -24,6 +35,56 @@ const INACTIVE_BUTTON_CLASS =
 	"shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
 
 type AppMode = "draw" | "animate";
+
+function clampNumber(value: number, min: number, max: number) {
+	return Math.min(max, Math.max(min, value));
+}
+
+function isBivectorView(value: string | null): value is BivectorView {
+	return value === "blade" || value === "disk" || value === "companion";
+}
+
+function readStoredValue(key: string) {
+	try {
+		return window.localStorage.getItem(key);
+	} catch {
+		return null;
+	}
+}
+
+function writeStoredValue(key: string, value: string) {
+	try {
+		window.localStorage.setItem(key, value);
+	} catch {
+		// Ignore storage errors, for example private browsing restrictions.
+	}
+}
+
+function readStoredPenColor() {
+	const storedColor = readStoredValue(STORAGE_KEYS.penColor);
+
+	return storedColor && PEN_COLORS.includes(storedColor)
+		? storedColor
+		: DEFAULT_PEN_COLOR;
+}
+
+function readStoredPenWidth() {
+	const storedWidth = Number(readStoredValue(STORAGE_KEYS.penWidth));
+
+	if (!Number.isFinite(storedWidth)) return DEFAULT_PEN_WIDTH;
+
+	return clampNumber(Math.round(storedWidth), 2, 16);
+}
+
+function readStoredBivectorView(): BivectorView {
+	const storedView = readStoredValue(STORAGE_KEYS.bivectorView);
+
+	return isBivectorView(storedView) ? storedView : DEFAULT_BIVECTOR_VIEW;
+}
+
+function readStoredSoundEnabled() {
+	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
+}
 
 function App() {
 	const canvasStageRef = useRef<HTMLElement | null>(null);
@@ -36,11 +97,15 @@ function App() {
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
-	const [bivectorView, setBivectorView] = useState<BivectorView>("blade");
-	const [isSoundEnabled, setIsSoundEnabled] = useState(false);
+	const [bivectorView, setBivectorView] = useState<BivectorView>(
+		readStoredBivectorView,
+	);
+	const [isSoundEnabled, setIsSoundEnabled] = useState(
+		readStoredSoundEnabled,
+	);
 
-	const [penColor, setPenColor] = useState(PEN_COLORS[0]);
-	const [penWidth, setPenWidth] = useState(4);
+	const [penColor, setPenColor] = useState(readStoredPenColor);
+	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
 
 	const resampledPointCount = 256;
 	const visibleTermCount = resampledPointCount;
@@ -115,7 +180,6 @@ function App() {
 		setIsAnimationPlaying(false);
 		setMode("draw");
 		setIsSnapshotMenuOpen(false);
-		setIsSoundEnabled(false);
 		setClearSignal(value => value + 1);
 		setStrokes([]);
 
@@ -133,11 +197,23 @@ function App() {
 		soundEngineRef.current?.resetClock();
 	}
 
-	function toggleAnimation() {
+	async function toggleAnimation() {
 		if (!hasAnimationData) return;
+
+		const isStartingAnimation = mode !== "animate" || !isAnimationPlaying;
 
 		if (mode !== "animate") {
 			soundEngineRef.current?.resetClock();
+		}
+
+		if (isStartingAnimation && isSoundEnabled) {
+			try {
+				const engine = getSoundEngine();
+				await engine.enable();
+			} catch (error) {
+				console.error("Unable to start audio engine.", error);
+				setIsSoundEnabled(false);
+			}
 		}
 
 		setMode("animate");
@@ -266,6 +342,22 @@ function App() {
 
 		downloadBlob(blob, "bifourcation-snapshot.png");
 	}
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.penColor, penColor);
+	}, [penColor]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.penWidth, String(penWidth));
+	}, [penWidth]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.bivectorView, bivectorView);
+	}, [bivectorView]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.soundEnabled, String(isSoundEnabled));
+	}, [isSoundEnabled]);
 
 	useEffect(() => {
 		stopSoundFrame();
