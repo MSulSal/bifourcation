@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { EpicycleCanvas, type BivectorView } from "./components/EpicycleCanvas";
+import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
 import type { Stroke } from "./types/geometry";
@@ -90,6 +91,7 @@ function App() {
 	const canvasStageRef = useRef<HTMLElement | null>(null);
 	const soundEngineRef = useRef<DrawingSoundEngine | null>(null);
 	const soundFrameRef = useRef<number | null>(null);
+	const imageInputRef = useRef<HTMLInputElement | null>(null);
 
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -103,6 +105,8 @@ function App() {
 	const [isSoundEnabled, setIsSoundEnabled] = useState(
 		readStoredSoundEnabled,
 	);
+	const [isTracingImage, setIsTracingImage] = useState(false);
+	const [imageTraceError, setImageTraceError] = useState<string | null>(null);
 
 	const [penColor, setPenColor] = useState(readStoredPenColor);
 	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
@@ -180,6 +184,7 @@ function App() {
 		setIsAnimationPlaying(false);
 		setMode("draw");
 		setIsSnapshotMenuOpen(false);
+		setImageTraceError(null);
 		setClearSignal(value => value + 1);
 		setStrokes([]);
 
@@ -235,6 +240,53 @@ function App() {
 		} catch (error) {
 			console.error("Unable to start audio engine.", error);
 			setIsSoundEnabled(false);
+		}
+	}
+
+	async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+
+		if (!file) return;
+
+		const stage = canvasStageRef.current;
+		if (!stage) return;
+
+		setIsTracingImage(true);
+		setImageTraceError(null);
+		setIsAnimationPlaying(false);
+		setMode("draw");
+
+		stopSoundFrame();
+		soundEngineRef.current?.stop();
+		soundEngineRef.current?.resetClock();
+
+		try {
+			const rect = stage.getBoundingClientRect();
+
+			const tracedStrokes = await traceImageFileToStrokes(file, {
+				targetWidth: rect.width,
+				targetHeight: rect.height,
+				color: penColor,
+				width: Math.max(2, Math.min(penWidth, 8)),
+				maxContours: 12,
+				minPoints: 28,
+				maxProcessingSize: 480,
+			});
+
+			if (tracedStrokes.length === 0) {
+				setImageTraceError(
+					"No usable edges found. Try a higher-contrast image.",
+				);
+				return;
+			}
+
+			setStrokes(currentStrokes => [...currentStrokes, ...tracedStrokes]);
+		} catch (error) {
+			console.error("Image tracing failed.", error);
+			setImageTraceError("Could not trace that image.");
+		} finally {
+			setIsTracingImage(false);
 		}
 	}
 
@@ -440,6 +492,7 @@ function App() {
 						].join(" ")}
 					>
 						<DrawingCanvas
+							strokes={strokes}
 							clearSignal={clearSignal}
 							penColor={penColor}
 							penWidth={penWidth}
@@ -582,6 +635,44 @@ function App() {
 										}}
 									/>
 								</div>
+							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Image
+								</p>
+
+								<input
+									ref={imageInputRef}
+									className="hidden"
+									type="file"
+									accept="image/*"
+									onChange={handleImageUpload}
+								/>
+
+								<button
+									className="w-full rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+									onClick={() =>
+										imageInputRef.current?.click()
+									}
+									disabled={isTracingImage}
+								>
+									{isTracingImage
+										? "Tracing edges..."
+										: "Import image"}
+								</button>
+
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Uses classic Sobel edge detection. Best with
+									icons, sketches, logos, and high-contrast
+									images.
+								</p>
+
+								{imageTraceError && (
+									<p className="mt-3 text-xs leading-5 text-red-300">
+										{imageTraceError}
+									</p>
+								)}
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 text-sm text-zinc-300 shadow-lg backdrop-blur">
