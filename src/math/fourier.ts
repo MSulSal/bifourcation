@@ -20,6 +20,22 @@ export type FourierTerm = {
 	coefficient: Multivector;
 	amplitude: number;
 	phase: number;
+
+	/**
+	 * The DFT is periodic, so progress = 1 is the same as progress = 0.
+	 *
+	 * For drawn strokes, the visible stroke is open by default:
+	 *
+	 *   first sample → last sample
+	 *
+	 * not:
+	 *
+	 *   first sample → last sample → first sample
+	 *
+	 * This field stores the largest Fourier progress value that still belongs
+	 * to the actual drawn stroke.
+	 */
+	visibleProgressEnd?: number;
 };
 
 export type RotorState = {
@@ -29,6 +45,19 @@ export type RotorState = {
 	frequency: number;
 	phase: number;
 };
+
+function getVisibleProgressEnd(sampleCount: number) {
+	if (sampleCount <= 1) return 1;
+
+	return (sampleCount - 1) / sampleCount;
+}
+
+function getEvaluationProgress(terms: FourierTerm[], progress: number) {
+	const clampedProgress = Math.min(1, Math.max(0, progress));
+	const visibleProgressEnd = terms[0]?.visibleProgressEnd ?? 1;
+
+	return clampedProgress * visibleProgressEnd;
+}
 
 export function pointsToVectorSignal(points: Point[]): Multivector[] {
 	return points.map(point => vector(point.x, point.y));
@@ -77,9 +106,14 @@ export function computeDft(samples: Multivector[]): FourierTerm[] {
 }
 
 export function computeFourierTerms(points: Point[]): FourierTerm[] {
-	return computeDft(pointsToEvenSignal(points)).sort(
-		(a, b) => b.amplitude - a.amplitude,
-	);
+	const visibleProgressEnd = getVisibleProgressEnd(points.length);
+
+	return computeDft(pointsToEvenSignal(points))
+		.map(term => ({
+			...term,
+			visibleProgressEnd,
+		}))
+		.sort((a, b) => b.amplitude - a.amplitude);
 }
 
 export function evaluateFourierTerms(
@@ -91,6 +125,7 @@ export function evaluateFourierTerms(
 	point: Multivector;
 } {
 	const activeTerms = terms.slice(0, termLimit);
+	const evaluationProgress = getEvaluationProgress(terms, progress);
 
 	let currentEven = ZERO;
 	const rotors: RotorState[] = [];
@@ -98,7 +133,7 @@ export function evaluateFourierTerms(
 	for (const term of activeTerms) {
 		const center = evenMultivectorToVector(currentEven);
 
-		const angle = 2 * Math.PI * term.frequency * progress;
+		const angle = 2 * Math.PI * term.frequency * evaluationProgress;
 		const rotatingCoefficient = geometricProduct(
 			term.coefficient,
 			rotor(angle),
