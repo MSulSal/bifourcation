@@ -17,6 +17,14 @@ type PixelPoint = {
 	y: number;
 };
 
+type ContourWithBounds = {
+	points: PixelPoint[];
+	minX: number;
+	maxX: number;
+	minY: number;
+	maxY: number;
+};
+
 const NEIGHBOR_DIRECTIONS: PixelPoint[] = [
 	{ x: 1, y: 0 },
 	{ x: 1, y: 1 },
@@ -142,8 +150,11 @@ function getGrayscalePixels(imageData: ImageData) {
 		const red = imageData.data[dataIndex];
 		const green = imageData.data[dataIndex + 1];
 		const blue = imageData.data[dataIndex + 2];
+		const alpha = imageData.data[dataIndex + 3] / 255;
 
-		grayscale[index] = red * 0.299 + green * 0.587 + blue * 0.114;
+		const luminance = red * 0.299 + green * 0.587 + blue * 0.114;
+
+		grayscale[index] = luminance * alpha + 255 * (1 - alpha);
 	}
 
 	return grayscale;
@@ -152,22 +163,218 @@ function getGrayscalePixels(imageData: ImageData) {
 function blurGrayscale(grayscale: Float32Array, width: number, height: number) {
 	const blurred = new Float32Array(grayscale.length);
 
-	for (let y = 1; y < height - 1; y += 1) {
-		for (let x = 1; x < width - 1; x += 1) {
+	for (let y = 0; y < height; y += 1) {
+		for (let x = 0; x < width; x += 1) {
 			let total = 0;
+			let count = 0;
 
 			for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
 				for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-					total +=
-						grayscale[getIndex(x + offsetX, y + offsetY, width)];
+					const sampleX = x + offsetX;
+					const sampleY = y + offsetY;
+
+					if (
+						sampleX < 0 ||
+						sampleY < 0 ||
+						sampleX >= width ||
+						sampleY >= height
+					) {
+						continue;
+					}
+
+					total += grayscale[getIndex(sampleX, sampleY, width)];
+					count += 1;
 				}
 			}
 
-			blurred[getIndex(x, y, width)] = total / 9;
+			blurred[getIndex(x, y, width)] = total / count;
 		}
 	}
 
 	return blurred;
+}
+
+function getOtsuThreshold(grayscale: Float32Array) {
+	const histogram = new Uint32Array(256);
+
+	for (const value of grayscale) {
+		histogram[Math.round(Math.min(255, Math.max(0, value)))] += 1;
+	}
+
+	const total = grayscale.length;
+	let sum = 0;
+
+	for (let level = 0; level < 256; level += 1) {
+		sum += level * histogram[level];
+	}
+
+	let backgroundWeight = 0;
+	let backgroundSum = 0;
+	let bestVariance = -1;
+	let bestThreshold = 128;
+
+	for (let level = 0; level < 256; level += 1) {
+		backgroundWeight += histogram[level];
+
+		if (backgroundWeight === 0) continue;
+
+		const foregroundWeight = total - backgroundWeight;
+
+		if (foregroundWeight === 0) break;
+
+		backgroundSum += level * histogram[level];
+
+		const backgroundMean = backgroundSum / backgroundWeight;
+		const foregroundMean = (sum - backgroundSum) / foregroundWeight;
+		const betweenClassVariance =
+			backgroundWeight *
+			foregroundWeight *
+			(backgroundMean - foregroundMean) ** 2;
+
+		if (betweenClassVariance > bestVariance) {
+			bestVariance = betweenClassVariance;
+			bestThreshold = level;
+		}
+	}
+
+	return bestThreshold;
+}
+
+function getBorderMean(grayscale: Float32Array, width: number, height: number) {
+	let total = 0;
+	let count = 0;
+
+	for (let x = 0; x < width; x += 1) {
+		total += grayscale[getIndex(x, 0, width)];
+		total += grayscale[getIndex(x, height - 1, width)];
+		count += 2;
+	}
+
+	for (let y = 1; y < height - 1; y += 1) {
+		total += grayscale[getIndex(0, y, width)];
+		total += grayscale[getIndex(width - 1, y, width)];
+		count += 2;
+	}
+
+	return total / count;
+}
+
+function getForegroundMask(
+	grayscale: Float32Array,
+	width: number,
+	height: number,
+	manualThreshold?: number,
+) {
+	const threshold = manualThreshold ?? getOtsuThreshold(grayscale);
+	const borderMean = getBorderMean(grayscale, width, height);
+	const foregroundIsDark = borderMean > threshold;
+
+	const foreground = new Uint8Array(grayscale.length);
+
+	for (let index = 0; index < grayscale.length; index += 1) {
+		const value = grayscale[index];
+
+		foreground[index] = foregroundIsDark
+			? value < threshold
+				? 1
+				: 0
+			: value > threshold
+				? 1
+				: 0;
+	}
+
+	return foreground;
+}
+
+function dilateMask(mask: Uint8Array, width: number, height: number) {
+	const dilated = new Uint8Array(mask.length);
+
+	for (let y = 1; y < height - 1; y += 1) {
+		for (let x = 1; x < width - 1; x += 1) {
+			const index = getIndex(x, y, width);
+
+			if (mask[index] === 1) {
+				dilated[index] = 1;
+				continue;
+			}
+
+			for (const direction of NEIGHBOR_DIRECTIONS) {
+				const sampleX = x + direction.x;
+				const sampleY = y + direction.y;
+
+				if (mask[getIndex(sampleX, sampleY, width)] === 1) {
+					dilated[index] = 1;
+					break;
+				}
+			}
+		}
+	}
+
+	return dilated;
+}
+
+function erodeMask(mask: Uint8Array, width: number, height: number) {
+	const eroded = new Uint8Array(mask.length);
+
+	for (let y = 1; y < height - 1; y += 1) {
+		for (let x = 1; x < width - 1; x += 1) {
+			const index = getIndex(x, y, width);
+
+			if (mask[index] !== 1) continue;
+
+			let keepPixel = true;
+
+			for (const direction of NEIGHBOR_DIRECTIONS) {
+				const sampleX = x + direction.x;
+				const sampleY = y + direction.y;
+
+				if (mask[getIndex(sampleX, sampleY, width)] !== 1) {
+					keepPixel = false;
+					break;
+				}
+			}
+
+			if (keepPixel) {
+				eroded[index] = 1;
+			}
+		}
+	}
+
+	return eroded;
+}
+
+function closeSmallGaps(mask: Uint8Array, width: number, height: number) {
+	return erodeMask(dilateMask(mask, width, height), width, height);
+}
+
+function getBoundaryPixels(mask: Uint8Array, width: number, height: number) {
+	const boundary = new Uint8Array(mask.length);
+
+	for (let y = 1; y < height - 1; y += 1) {
+		for (let x = 1; x < width - 1; x += 1) {
+			const index = getIndex(x, y, width);
+
+			if (mask[index] !== 1) continue;
+
+			let touchesBackground = false;
+
+			for (const direction of NEIGHBOR_DIRECTIONS) {
+				const sampleX = x + direction.x;
+				const sampleY = y + direction.y;
+
+				if (mask[getIndex(sampleX, sampleY, width)] === 0) {
+					touchesBackground = true;
+					break;
+				}
+			}
+
+			if (touchesBackground) {
+				boundary[index] = 1;
+			}
+		}
+	}
+
+	return boundary;
 }
 
 function getSobelMagnitudes(
@@ -214,7 +421,7 @@ function getSobelMagnitudes(
 	return magnitudes;
 }
 
-function getAutomaticThreshold(magnitudes: Float32Array) {
+function getAutomaticSobelThreshold(magnitudes: Float32Array) {
 	let total = 0;
 	let count = 0;
 
@@ -242,7 +449,7 @@ function getAutomaticThreshold(magnitudes: Float32Array) {
 	return Math.max(52, mean + standardDeviation * 0.7);
 }
 
-function thresholdEdges(
+function thresholdSobelEdges(
 	magnitudes: Float32Array,
 	threshold: number,
 	width: number,
@@ -380,6 +587,47 @@ function traceFromPixel(
 	return contour;
 }
 
+function getContourBounds(points: PixelPoint[]) {
+	let minX = Number.POSITIVE_INFINITY;
+	let maxX = Number.NEGATIVE_INFINITY;
+	let minY = Number.POSITIVE_INFINITY;
+	let maxY = Number.NEGATIVE_INFINITY;
+
+	for (const point of points) {
+		minX = Math.min(minX, point.x);
+		maxX = Math.max(maxX, point.x);
+		minY = Math.min(minY, point.y);
+		maxY = Math.max(maxY, point.y);
+	}
+
+	return {
+		minX,
+		maxX,
+		minY,
+		maxY,
+	};
+}
+
+function isLikelyOuterImageFrame(
+	contour: ContourWithBounds,
+	width: number,
+	height: number,
+) {
+	const contourWidth = contour.maxX - contour.minX;
+	const contourHeight = contour.maxY - contour.minY;
+
+	const touchesEdges =
+		contour.minX <= 2 ||
+		contour.minY <= 2 ||
+		contour.maxX >= width - 3 ||
+		contour.maxY >= height - 3;
+
+	const coversMostImage =
+		contourWidth > width * 0.88 && contourHeight > height * 0.88;
+
+	return touchesEdges && coversMostImage;
+}
+
 function traceContours(
 	edgePixels: Uint8Array,
 	width: number,
@@ -387,7 +635,7 @@ function traceContours(
 	minPoints: number,
 ) {
 	const visited = new Uint8Array(edgePixels.length);
-	const contours: PixelPoint[][] = [];
+	const contours: ContourWithBounds[] = [];
 
 	const starts: PixelPoint[] = [];
 	const loopStarts: PixelPoint[] = [];
@@ -418,7 +666,7 @@ function traceContours(
 
 		if (visited[index] === 1) continue;
 
-		const contour = traceFromPixel(
+		const points = traceFromPixel(
 			start,
 			edgePixels,
 			visited,
@@ -426,9 +674,18 @@ function traceContours(
 			height,
 		);
 
-		if (contour.length >= minPoints) {
-			contours.push(contour);
-		}
+		if (points.length < minPoints) continue;
+
+		const bounds = getContourBounds(points);
+
+		const contour = {
+			points,
+			...bounds,
+		};
+
+		if (isLikelyOuterImageFrame(contour, width, height)) continue;
+
+		contours.push(contour);
 	}
 
 	return contours;
@@ -444,7 +701,7 @@ function convertContoursToStrokes({
 	width,
 	maxContours,
 }: {
-	contours: PixelPoint[][];
+	contours: ContourWithBounds[];
 	processWidth: number;
 	processHeight: number;
 	targetWidth: number;
@@ -472,16 +729,16 @@ function convertContoursToStrokes({
 	const offsetY = (targetHeight - renderedHeight) / 2;
 
 	return contours
-		.sort((a, b) => b.length - a.length)
+		.sort((a, b) => b.points.length - a.points.length)
 		.slice(0, maxContours)
 		.map((contour): Stroke => {
-			const points = contour.map(point => ({
+			const points = contour.points.map(point => ({
 				x: offsetX + point.x * safeScale,
 				y: offsetY + point.y * safeScale,
 			}));
 
-			const simplified = simplifyPath(points, 1.8);
-			const limited = limitPointCount(simplified, 220);
+			const simplified = simplifyPath(points, 1.05);
+			const limited = limitPointCount(simplified, 280);
 
 			return {
 				color,
@@ -497,9 +754,9 @@ export async function traceImageFileToStrokes(
 	options: TraceImageOptions,
 ): Promise<Stroke[]> {
 	const image = await loadImage(file);
-	const maxProcessingSize = options.maxProcessingSize ?? 480;
-	const maxContours = options.maxContours ?? 12;
-	const minPoints = options.minPoints ?? 28;
+	const maxProcessingSize = options.maxProcessingSize ?? 720;
+	const maxContours = options.maxContours ?? 96;
+	const minPoints = options.minPoints ?? 16;
 
 	const processSize = getProcessingSize(
 		image.naturalWidth,
@@ -517,6 +774,7 @@ export async function traceImageFileToStrokes(
 		throw new Error("Unable to create image processing canvas.");
 	}
 
+	ctx.clearRect(0, 0, processSize.width, processSize.height);
 	ctx.drawImage(image, 0, 0, processSize.width, processSize.height);
 
 	const imageData = ctx.getImageData(
@@ -531,27 +789,52 @@ export async function traceImageFileToStrokes(
 		processSize.width,
 		processSize.height,
 	);
-	const magnitudes = getSobelMagnitudes(
-		blurred,
+
+	const foregroundMask = closeSmallGaps(
+		getForegroundMask(
+			blurred,
+			processSize.width,
+			processSize.height,
+			options.threshold,
+		),
 		processSize.width,
 		processSize.height,
 	);
 
-	const threshold = options.threshold ?? getAutomaticThreshold(magnitudes);
-
-	const edgePixels = thresholdEdges(
-		magnitudes,
-		threshold,
+	const binaryBoundaryPixels = getBoundaryPixels(
+		foregroundMask,
 		processSize.width,
 		processSize.height,
 	);
 
-	const contours = traceContours(
-		edgePixels,
+	const binaryContours = traceContours(
+		binaryBoundaryPixels,
 		processSize.width,
 		processSize.height,
 		minPoints,
 	);
+
+	let contours = binaryContours;
+
+	if (contours.length === 0) {
+		const sobelMagnitudes = getSobelMagnitudes(
+			blurred,
+			processSize.width,
+			processSize.height,
+		);
+
+		contours = traceContours(
+			thresholdSobelEdges(
+				sobelMagnitudes,
+				getAutomaticSobelThreshold(sobelMagnitudes),
+				processSize.width,
+				processSize.height,
+			),
+			processSize.width,
+			processSize.height,
+			minPoints,
+		);
+	}
 
 	return convertContoursToStrokes({
 		contours,

@@ -268,10 +268,10 @@ function App() {
 				targetWidth: rect.width,
 				targetHeight: rect.height,
 				color: penColor,
-				width: Math.max(2, Math.min(penWidth, 8)),
-				maxContours: 12,
-				minPoints: 28,
-				maxProcessingSize: 480,
+				width: Math.max(1.5, Math.min(penWidth, 5)),
+				maxContours: 96,
+				minPoints: 16,
+				maxProcessingSize: 720,
 			});
 
 			if (tracedStrokes.length === 0) {
@@ -663,9 +663,9 @@ function App() {
 								</button>
 
 								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Uses classic Sobel edge detection. Best with
-									icons, sketches, logos, and high-contrast
-									images.
+									Uses classic threshold and Sobel-style edge
+									tracing. Best with icons, sketches, logos,
+									and high-contrast images.
 								</p>
 
 								{imageTraceError && (
