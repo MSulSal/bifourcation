@@ -13,7 +13,7 @@ type AnimatedStroke = {
 	terms: FourierTerm[];
 };
 
-type EpicycleCanvasProps = {
+type RotorCanvasProps = {
 	strokes: AnimatedStroke[];
 	isActive: boolean;
 	isPlaying: boolean;
@@ -28,13 +28,13 @@ const MAX_LABELED_COMPONENTS = 10;
 
 const COMPLETED_STROKE_PROGRESS = 0.999;
 
-export function EpicycleCanvas({
+export function RotorCanvas({
 	strokes,
 	isActive,
 	isPlaying,
 	termLimit,
 	bivectorView,
-}: EpicycleCanvasProps) {
+}: RotorCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const animationFrameRef = useRef<number | null>(null);
 	const startedAtRef = useRef<number | null>(null);
@@ -770,20 +770,20 @@ export function EpicycleCanvas({
 		const showTip = options.showTip ?? true;
 		const activeTermLimit = Math.min(termLimit, stroke.terms.length);
 
-		const { epicycles, point } = evaluateFourierTerms(
+		const { rotors, point } = evaluateFourierTerms(
 			stroke.terms,
 			progress,
 			activeTermLimit,
 		);
 
-		for (const [index, epicycle] of epicycles.entries()) {
-			const center = getCanvasPoint(epicycle.center);
-			const tip = getCanvasPoint(epicycle.tip);
+		for (const [index, rotor] of rotors.entries()) {
+			const center = getCanvasPoint(rotor.center);
+			const tip = getCanvasPoint(rotor.tip);
 
 			drawOrientedComponent(
 				center,
 				tip,
-				epicycle.frequency,
+				rotor.frequency,
 				stroke.color,
 				stroke.width,
 				index,
@@ -791,14 +791,14 @@ export function EpicycleCanvas({
 			);
 		}
 
-		for (const [index, epicycle] of epicycles.entries()) {
-			const center = getCanvasPoint(epicycle.center);
-			const tip = getCanvasPoint(epicycle.tip);
+		for (const [index, rotor] of rotors.entries()) {
+			const center = getCanvasPoint(rotor.center);
+			const tip = getCanvasPoint(rotor.tip);
 
 			drawRotorLabel(
 				center,
 				tip,
-				epicycle.frequency,
+				rotor.frequency,
 				stroke.color,
 				index,
 				opacity,

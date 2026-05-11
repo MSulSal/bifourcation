@@ -22,7 +22,7 @@ export type FourierTerm = {
 	phase: number;
 };
 
-export type EpicycleState = {
+export type RotorState = {
 	center: Multivector;
 	tip: Multivector;
 	radius: number;
@@ -87,13 +87,13 @@ export function evaluateFourierTerms(
 	progress: number,
 	termLimit = terms.length,
 ): {
-	epicycles: EpicycleState[];
+	rotors: RotorState[];
 	point: Multivector;
 } {
 	const activeTerms = terms.slice(0, termLimit);
 
 	let currentEven = ZERO;
-	const epicycles: EpicycleState[] = [];
+	const rotors: RotorState[] = [];
 
 	for (const term of activeTerms) {
 		const center = evenMultivectorToVector(currentEven);
@@ -108,7 +108,7 @@ export function evaluateFourierTerms(
 
 		const tip = evenMultivectorToVector(currentEven);
 
-		epicycles.push({
+		rotors.push({
 			center,
 			tip,
 			radius: term.amplitude,
@@ -118,7 +118,7 @@ export function evaluateFourierTerms(
 	}
 
 	return {
-		epicycles,
+		rotors,
 		point: evenMultivectorToVector(currentEven),
 	};
 }

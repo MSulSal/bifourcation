@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
-import { EpicycleCanvas, type BivectorView } from "./components/EpicycleCanvas";
+import { RotorCanvas, type BivectorView } from "./components/RotorCanvas";
 import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
@@ -500,7 +500,7 @@ function App() {
 						/>
 					</div>
 
-					<EpicycleCanvas
+					<RotorCanvas
 						strokes={animatedStrokes}
 						isActive={isAnimationMode}
 						isPlaying={isAnimationPlaying}
