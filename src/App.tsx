@@ -20,7 +20,7 @@ const PEN_COLORS = [
 
 const DEFAULT_PEN_COLOR = PEN_COLORS[0];
 const DEFAULT_PEN_WIDTH = 4;
-const DEFAULT_BIVECTOR_VIEW: BivectorView = "blade";
+const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
 
 const STORAGE_KEYS = {
 	penColor: "bifourcation.penColor",
@@ -375,7 +375,7 @@ function App() {
 			try {
 				await navigator.share({
 					title: "Bifourcation",
-					text: "Fourier through oriented planes.",
+					text: "Fourier through e₁e₂ rotors.",
 					files: [file],
 				});
 
@@ -467,14 +467,14 @@ function App() {
 								Bifourcation
 							</h1>
 							<p className="text-sm text-zinc-400">
-								Draw a shape. Watch it split into rotating
-								geometry.
+								Draw a shape. Watch rotor-driven Fourier terms
+								rebuild it.
 							</p>
 						</div>
 					</div>
 
 					<div className="w-fit rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-medium text-zinc-300">
-						Fourier × Oriented Planes
+						Fourier via e₁e₂ Rotors
 					</div>
 				</header>
 
@@ -516,6 +516,14 @@ function App() {
 						<span>{totalResampledPoints} sampled</span>
 						<span>·</span>
 						<span>{totalFourierTerms} terms</span>
+						{isAnimationMode && (
+							<>
+								<span className="hidden sm:inline">·</span>
+								<span className="hidden font-mono sm:inline">
+									termₖ = cₖRₖ(t)
+								</span>
+							</>
+						)}
 					</div>
 
 					{isAnimationMode && !isAnimationPlaying && (
@@ -677,7 +685,7 @@ function App() {
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 text-sm text-zinc-300 shadow-lg backdrop-blur">
 								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Plane
+									Rotor plane
 								</p>
 
 								<div className="space-y-2 leading-5 text-zinc-400">
@@ -697,13 +705,21 @@ function App() {
 										<span className="text-zinc-100">
 											e₁e₂
 										</span>{" "}
-										is oriented area in the drawing plane.
+										is the oriented drawing plane.
+									</p>
+
+									<p className="font-mono text-[11px] leading-5 text-zinc-300">
+										Rₖ(t) = cos(2πkt) + e₁e₂sin(2πkt)
+									</p>
+
+									<p className="font-mono text-[11px] leading-5 text-zinc-300">
+										termₖ = cₖRₖ(t)
 									</p>
 
 									<p className="text-zinc-500">
-										Blade and disk modes show oriented area.
-										Companion mode shows the e₁e₂-rotated
-										vector.
+										Disk shows rotor symmetry. Blade shows
+										oriented area. Companion shows e₁e₂
+										acting as a 90° rotation.
 									</p>
 								</div>
 							</section>

@@ -24,6 +24,7 @@ type EpicycleCanvasProps = {
 const STROKE_DURATION_MS = 6500;
 const MAX_VISIBLE_COMPONENTS = 64;
 const MAX_ARROWED_COMPONENTS = 24;
+const MAX_LABELED_COMPONENTS = 10;
 
 const COMPLETED_STROKE_PROGRESS = 0.999;
 
@@ -187,6 +188,62 @@ export function EpicycleCanvas({
 
 		ctx.setLineDash([]);
 		ctx.globalAlpha = 1;
+	}
+
+	function formatRotorLabel(frequency: number) {
+		const sign = frequency > 0 ? "+" : "−";
+
+		return `c${sign}${Math.abs(frequency)}R${sign}${Math.abs(frequency)}(t)`;
+	}
+
+	function drawRotorLabel(
+		center: Point,
+		tip: Point,
+		frequency: number,
+		color: string,
+		index: number,
+		opacity: number,
+	) {
+		if (frequency === 0 || index >= MAX_LABELED_COMPONENTS) return;
+
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		const dx = tip.x - center.x;
+		const dy = tip.y - center.y;
+		const length = Math.hypot(dx, dy);
+
+		if (length < 26) return;
+
+		const normal = {
+			x: -dy / length,
+			y: dx / length,
+		};
+
+		const labelPoint = {
+			x: (center.x + tip.x) * 0.5 + normal.x * 13,
+			y: (center.y + tip.y) * 0.5 + normal.y * 13,
+		};
+
+		const alpha = Math.max(0.08, 0.36 - index * 0.03) * opacity;
+		const label = formatRotorLabel(frequency);
+
+		ctx.save();
+		ctx.font =
+			"10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.lineWidth = 4;
+		ctx.strokeStyle = "#18181b";
+		ctx.globalAlpha = alpha * 0.85;
+		ctx.strokeText(label, labelPoint.x, labelPoint.y);
+		ctx.fillStyle = color;
+		ctx.globalAlpha = alpha;
+		ctx.fillText(label, labelPoint.x, labelPoint.y);
+		ctx.restore();
 	}
 
 	function drawPolygonHatching(
@@ -729,6 +786,20 @@ export function EpicycleCanvas({
 				epicycle.frequency,
 				stroke.color,
 				stroke.width,
+				index,
+				opacity,
+			);
+		}
+
+		for (const [index, epicycle] of epicycles.entries()) {
+			const center = getCanvasPoint(epicycle.center);
+			const tip = getCanvasPoint(epicycle.tip);
+
+			drawRotorLabel(
+				center,
+				tip,
+				epicycle.frequency,
+				stroke.color,
 				index,
 				opacity,
 			);
