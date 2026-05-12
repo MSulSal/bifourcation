@@ -1,311 +1,393 @@
-import type { FourierTerm } from "../math/fourier";
 import type { Point } from "../types/geometry";
 
-export type BivectorSoundView = "blade" | "disk" | "companion";
-export type SoundTraceMode = "sequential" | "simultaneous";
+export type SonicFourierTerm = {
+	frequency?: number;
+	freq?: number;
+	k?: number;
+	n?: number;
+	harmonic?: number;
+	index?: number;
+	amplitude?: number;
+	magnitude?: number;
+	radius?: number;
+	phase?: number;
+	angle?: number;
+	real?: number;
+	imaginary?: number;
+	re?: number;
+	im?: number;
+	x?: number;
+	y?: number;
+	coefficient?: unknown;
+	value?: unknown;
+	vector?: unknown;
+};
 
 export type SonicStroke = {
 	id: string;
 	color: string;
 	width: number;
-	path: Point[];
-	terms: FourierTerm[];
+	path: readonly Point[];
+	terms: readonly SonicFourierTerm[];
 };
 
-const DRAW_SPEED_PX_PER_MS = 0.16;
-const MIN_STROKE_DURATION_MS = 900;
-const MAX_STROKE_DURATION_MS = 28000;
+type BivectorView = "blade" | "disk" | "companion";
+type AnimationTraceMode = "sequential" | "simultaneous";
 
-const MAX_SOUND_TERMS = 14;
-const MAX_SIMULTANEOUS_SOUND_STROKES = 3;
-
-const ROOT_MIDI = 50; // D3
-const SCALE = [0, 2, 4, 7, 9]; // D major pentatonic
-const OCTAVE_COUNT = 4;
-
-const MASTER_GAIN = 0.11;
-
-type WebAudioWindow = Window &
-	typeof globalThis & {
-		webkitAudioContext?: typeof AudioContext;
-	};
-
-type SampledPathPoint = {
-	point: Point;
-	previous: Point;
-	next: Point;
-	normalizedX: number;
-	normalizedY: number;
-	curvature: number;
-	tangentAngle: number;
+type Voice = {
+	key: string;
+	view: BivectorView;
+	gain: GainNode;
+	pan: StereoPannerNode;
+	filter: BiquadFilterNode;
+	oscillators: OscillatorNode[];
+	stopping: boolean;
 };
 
-type SinePartial = {
-	ratio: number;
+type RotorTarget = {
+	key: string;
+	view: BivectorView;
+	frequencyHz: number;
 	gain: number;
-	detune?: number;
+	pan: number;
+	filterHz: number;
+	detuneCents: number;
 };
 
-type StrokeTimelineEntry = {
-	stroke: SonicStroke;
-	startMs: number;
-	endMs: number;
-	durationMs: number;
-};
+const MAX_ACTIVE_VOICES = 18;
+const LOOP_SECONDS = 8;
+const MASTER_GAIN = 0.42;
 
-type ActiveSoundStroke = {
-	stroke: SonicStroke;
-	progress: number;
-	durationMs: number;
-	sampled: SampledPathPoint;
-};
-
-function midiToHz(midi: number) {
-	return 440 * 2 ** ((midi - 69) / 12);
-}
+const PENTATONIC_STEPS = [0, 2, 4, 7, 9];
+const BASE_NOTE_HZ = 130.8128;
 
 function clamp(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
 }
 
-function lerp(a: number, b: number, t: number) {
-	return a + (b - a) * t;
+function smoothstep(edge0: number, edge1: number, value: number) {
+	const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+
+	return t * t * (3 - 2 * t);
 }
 
-function lerpPoint(a: Point, b: Point, t: number): Point {
-	return {
-		x: lerp(a.x, b.x, t),
-		y: lerp(a.y, b.y, t),
-	};
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
-function getAudioContextConstructor() {
-	return (
-		window.AudioContext ??
-		(window as WebAudioWindow).webkitAudioContext ??
-		null
-	);
-}
+function getNumber(record: Record<string, unknown>, keys: string[]) {
+	for (const key of keys) {
+		const value = record[key];
 
-function getPathLength(points: Point[]) {
-	let total = 0;
-
-	for (let index = 1; index < points.length; index += 1) {
-		const previous = points[index - 1];
-		const current = points[index];
-
-		total += Math.hypot(current.x - previous.x, current.y - previous.y);
+		if (typeof value === "number" && Number.isFinite(value)) {
+			return value;
+		}
 	}
 
-	return total;
+	return null;
 }
 
-function getStrokeDurationMs(stroke: SonicStroke) {
-	const length = getPathLength(stroke.path);
+function getPointLike(value: unknown): { x: number; y: number } | null {
+	if (Array.isArray(value)) {
+		const x = value[0];
+		const y = value[1];
 
-	if (length === 0) return MIN_STROKE_DURATION_MS;
+		if (
+			typeof x === "number" &&
+			Number.isFinite(x) &&
+			typeof y === "number" &&
+			Number.isFinite(y)
+		) {
+			return { x, y };
+		}
 
-	return Math.min(
-		MAX_STROKE_DURATION_MS,
-		Math.max(MIN_STROKE_DURATION_MS, length / DRAW_SPEED_PX_PER_MS),
-	);
-}
-
-function getSequentialTimeline(strokes: SonicStroke[]) {
-	const timeline: StrokeTimelineEntry[] = [];
-	let cursorMs = 0;
-
-	for (const stroke of strokes) {
-		const durationMs = getStrokeDurationMs(stroke);
-
-		timeline.push({
-			stroke,
-			startMs: cursorMs,
-			endMs: cursorMs + durationMs,
-			durationMs,
-		});
-
-		cursorMs += durationMs;
-	}
-
-	return {
-		timeline,
-		totalDurationMs: Math.max(cursorMs, MIN_STROKE_DURATION_MS),
-	};
-}
-
-function getSequentialSoundFrame(strokes: SonicStroke[], loopElapsed: number) {
-	const { timeline } = getSequentialTimeline(strokes);
-
-	if (timeline.length === 0) {
 		return null;
 	}
 
-	const timelineIndex = timeline.findIndex(
-		entry => loopElapsed >= entry.startMs && loopElapsed < entry.endMs,
-	);
+	if (!isRecord(value)) return null;
 
-	const strokeIndex =
-		timelineIndex === -1 ? timeline.length - 1 : timelineIndex;
-	const entry = timeline[strokeIndex];
-	const strokeElapsed = loopElapsed - entry.startMs;
+	const x = getNumber(value, ["x", "real", "re"]);
+	const y = getNumber(value, ["y", "imaginary", "im"]);
+
+	if (x !== null && y !== null) {
+		return { x, y };
+	}
+
+	const amplitude = getNumber(value, ["amplitude", "magnitude", "radius"]);
+	const phase = getNumber(value, ["phase", "angle"]);
+
+	if (amplitude !== null && phase !== null) {
+		return {
+			x: amplitude * Math.cos(phase),
+			y: amplitude * Math.sin(phase),
+		};
+	}
+
+	return null;
+}
+
+function getCoefficient(term: SonicFourierTerm) {
+	const record = term as Record<string, unknown>;
+
+	const nested =
+		getPointLike(record.coefficient) ??
+		getPointLike(record.value) ??
+		getPointLike(record.vector);
+
+	if (nested) return nested;
+
+	const direct = getPointLike(record);
+	if (direct) return direct;
+
+	const amplitude = getNumber(record, ["amplitude", "magnitude", "radius"]);
+	const phase = getNumber(record, ["phase", "angle"]) ?? 0;
+
+	if (amplitude !== null) {
+		return {
+			x: amplitude * Math.cos(phase),
+			y: amplitude * Math.sin(phase),
+		};
+	}
 
 	return {
-		stroke: entry.stroke,
-		strokeIndex,
-		progress: clamp(strokeElapsed / entry.durationMs, 0, 1),
-		durationMs: entry.durationMs,
+		x: 0,
+		y: 0,
 	};
 }
 
-function getSimultaneousCycleDuration(strokes: SonicStroke[]) {
-	if (strokes.length === 0) return MIN_STROKE_DURATION_MS;
+function getAmplitude(term: SonicFourierTerm) {
+	const record = term as Record<string, unknown>;
+	const directAmplitude = getNumber(record, [
+		"amplitude",
+		"magnitude",
+		"radius",
+	]);
 
-	return Math.max(...strokes.map(getStrokeDurationMs));
-}
-
-function getPathBounds(path: Point[]) {
-	if (path.length === 0) {
-		return {
-			minX: 0,
-			maxX: 1,
-			minY: 0,
-			maxY: 1,
-		};
+	if (directAmplitude !== null) {
+		return Math.abs(directAmplitude);
 	}
 
-	const xs = path.map(point => point.x);
-	const ys = path.map(point => point.y);
+	const coefficient = getCoefficient(term);
 
-	const minX = Math.min(...xs);
-	const maxX = Math.max(...xs);
-	const minY = Math.min(...ys);
-	const maxY = Math.max(...ys);
-
-	return {
-		minX,
-		maxX: maxX === minX ? minX + 1 : maxX,
-		minY,
-		maxY: maxY === minY ? minY + 1 : maxY,
-	};
+	return Math.hypot(coefficient.x, coefficient.y);
 }
 
-function getAngleBetween(a: Point, b: Point, c: Point) {
-	const ab = {
-		x: b.x - a.x,
-		y: b.y - a.y,
-	};
+function getPhase(term: SonicFourierTerm) {
+	const record = term as Record<string, unknown>;
+	const directPhase = getNumber(record, ["phase", "angle"]);
 
-	const bc = {
-		x: c.x - b.x,
-		y: c.y - b.y,
-	};
+	if (directPhase !== null) return directPhase;
 
-	const abLength = Math.hypot(ab.x, ab.y);
-	const bcLength = Math.hypot(bc.x, bc.y);
+	const coefficient = getCoefficient(term);
 
-	if (abLength === 0 || bcLength === 0) return 0;
-
-	const dot = ab.x * bc.x + ab.y * bc.y;
-	const normalizedDot = clamp(dot / (abLength * bcLength), -1, 1);
-
-	return Math.acos(normalizedDot);
+	return Math.atan2(coefficient.y, coefficient.x);
 }
 
-function samplePathAtProgress(
-	path: Point[],
-	progress: number,
-): SampledPathPoint {
-	if (path.length === 0) {
-		const fallback = { x: 0, y: 0 };
+function fallbackDftFrequency(index: number) {
+	if (index === 0) return 0;
 
-		return {
-			point: fallback,
-			previous: fallback,
-			next: fallback,
-			normalizedX: 0.5,
-			normalizedY: 0.5,
-			curvature: 0,
-			tangentAngle: 0,
-		};
-	}
+	return index % 2 === 1 ? (index + 1) / 2 : -index / 2;
+}
 
-	if (path.length === 1) {
-		const point = path[0];
+function getRotorFrequency(term: SonicFourierTerm, index: number) {
+	const record = term as Record<string, unknown>;
+	const directFrequency = getNumber(record, [
+		"frequency",
+		"freq",
+		"k",
+		"n",
+		"harmonic",
+		"index",
+	]);
 
-		return {
-			point,
-			previous: point,
-			next: point,
-			normalizedX: 0.5,
-			normalizedY: 0.5,
-			curvature: 0,
-			tangentAngle: 0,
-		};
-	}
+	return directFrequency ?? fallbackDftFrequency(index);
+}
 
-	const bounds = getPathBounds(path);
-	const clampedProgress = clamp(progress, 0, 0.999999);
-	const exactIndex = clampedProgress * (path.length - 1);
-	const lowerIndex = Math.floor(exactIndex);
-	const upperIndex = Math.min(path.length - 1, lowerIndex + 1);
-	const t = exactIndex - lowerIndex;
+function rotorFrequencyToHz(rotorFrequency: number, phase: number) {
+	const absoluteFrequency = Math.abs(Math.round(rotorFrequency));
 
-	const point = lerpPoint(path[lowerIndex], path[upperIndex], t);
-	const previous = path[Math.max(0, lowerIndex - 3)];
-	const next = path[Math.min(path.length - 1, upperIndex + 3)];
+	if (absoluteFrequency === 0) return 0;
 
-	const normalizedX = clamp(
-		(point.x - bounds.minX) / (bounds.maxX - bounds.minX),
+	const degree = absoluteFrequency % PENTATONIC_STEPS.length;
+	const octave = clamp(
+		Math.floor(absoluteFrequency / PENTATONIC_STEPS.length),
 		0,
-		1,
+		3,
+	);
+	const phaseOctave = phase > Math.PI / 2 || phase < -Math.PI / 2 ? 1 : 0;
+	const semitones = PENTATONIC_STEPS[degree] + 12 * (octave + phaseOctave);
+
+	return BASE_NOTE_HZ * 2 ** (semitones / 12);
+}
+
+function getStrokeWeight({
+	strokeIndex,
+	strokeCount,
+	traceMode,
+	elapsedSeconds,
+}: {
+	strokeIndex: number;
+	strokeCount: number;
+	traceMode: AnimationTraceMode;
+	elapsedSeconds: number;
+}) {
+	if (strokeCount <= 0) return 0;
+	if (traceMode === "simultaneous") return 1;
+
+	const phase =
+		((elapsedSeconds % LOOP_SECONDS) + LOOP_SECONDS) / LOOP_SECONDS;
+	const position = phase * strokeCount;
+	const wrappedDistance = Math.min(
+		Math.abs(position - strokeIndex),
+		Math.abs(position - strokeIndex - strokeCount),
+		Math.abs(position - strokeIndex + strokeCount),
 	);
 
-	const normalizedY = clamp(
-		(point.y - bounds.minY) / (bounds.maxY - bounds.minY),
+	return 1 - smoothstep(0.2, 1, wrappedDistance);
+}
+
+function createTargetKey({
+	strokeId,
+	termIndex,
+	rotorFrequency,
+	view,
+}: {
+	strokeId: string;
+	termIndex: number;
+	rotorFrequency: number;
+	view: BivectorView;
+}) {
+	return `${view}:${strokeId}:${termIndex}:${rotorFrequency}`;
+}
+
+function buildRotorTargets({
+	strokes,
+	view,
+	traceMode,
+	visibleTermCount,
+	elapsedSeconds,
+}: {
+	strokes: readonly SonicStroke[];
+	view: BivectorView;
+	traceMode: AnimationTraceMode;
+	visibleTermCount: number;
+	elapsedSeconds: number;
+}): RotorTarget[] {
+	const termLimit = clamp(Math.round(visibleTermCount), 0, 256);
+
+	if (termLimit === 0) return [];
+
+	const rawTargets: Array<
+		RotorTarget & {
+			amplitude: number;
+			strokeWeight: number;
+		}
+	> = [];
+
+	for (const [strokeIndex, stroke] of strokes.entries()) {
+		const strokeWeight = getStrokeWeight({
+			strokeIndex,
+			strokeCount: strokes.length,
+			traceMode,
+			elapsedSeconds,
+		});
+
+		if (strokeWeight <= 0.001) continue;
+
+		const visibleTerms = stroke.terms.slice(0, termLimit);
+		const maxAmplitude = Math.max(
+			...visibleTerms.map(term => getAmplitude(term)),
+			0.000001,
+		);
+
+		for (const [termIndex, term] of visibleTerms.entries()) {
+			const rotorFrequency = getRotorFrequency(term, termIndex);
+
+			if (rotorFrequency === 0) continue;
+
+			const amplitude = getAmplitude(term);
+			if (amplitude <= 0.000001) continue;
+
+			const phase = getPhase(term);
+			const frequencyHz = rotorFrequencyToHz(rotorFrequency, phase);
+			if (frequencyHz <= 0) continue;
+
+			const normalizedAmplitude = clamp(amplitude / maxAmplitude, 0, 1);
+			const coefficient = getCoefficient(term);
+			const pan =
+				Math.sin(phase) * 0.46 +
+				Math.sign(rotorFrequency) * 0.16 +
+				clamp(coefficient.x, -1, 1) * 0.08;
+
+			const brightness = 800 + normalizedAmplitude * 2300;
+			const directionDetune = rotorFrequency < 0 ? -5 : 5;
+
+			rawTargets.push({
+				key: createTargetKey({
+					strokeId: stroke.id,
+					termIndex,
+					rotorFrequency,
+					view,
+				}),
+				view,
+				frequencyHz,
+				gain:
+					(0.018 + normalizedAmplitude * 0.044) *
+					strokeWeight *
+					Math.sqrt(normalizedAmplitude),
+				pan: clamp(pan, -0.88, 0.88),
+				filterHz: brightness,
+				detuneCents: directionDetune + Math.sin(phase) * 5,
+				amplitude,
+				strokeWeight,
+			});
+		}
+	}
+
+	rawTargets.sort(
+		(a, b) => b.amplitude * b.strokeWeight - a.amplitude * a.strokeWeight,
+	);
+
+	const dominantTargets = rawTargets.slice(0, MAX_ACTIVE_VOICES);
+	const totalGain = dominantTargets.reduce(
+		(total, target) => total + target.gain,
 		0,
-		1,
 	);
+	const gainScale = totalGain > 0.5 ? 0.5 / totalGain : 1;
 
-	const angle = getAngleBetween(previous, point, next);
-	const curvature = clamp(angle / Math.PI, 0, 1);
-
-	const tangentAngle = Math.atan2(next.y - previous.y, next.x - previous.x);
-
-	return {
-		point,
-		previous,
-		next,
-		normalizedX,
-		normalizedY,
-		curvature,
-		tangentAngle,
-	};
+	return dominantTargets.map(target => ({
+		key: target.key,
+		view: target.view,
+		frequencyHz: target.frequencyHz,
+		gain: target.gain * gainScale,
+		pan: target.pan,
+		filterHz: target.filterHz,
+		detuneCents: target.detuneCents,
+	}));
 }
 
-function getSoundStepMs(view: BivectorSoundView, curvature: number) {
-	if (view === "disk") return 330 - curvature * 40;
-	if (view === "companion") return 290 - curvature * 35;
+function createAudioContext() {
+	const AudioContextCtor =
+		window.AudioContext ??
+		(
+			window as typeof window & {
+				webkitAudioContext?: typeof AudioContext;
+			}
+		).webkitAudioContext;
 
-	return 210 - curvature * 45;
-}
+	if (!AudioContextCtor) {
+		throw new Error("Web Audio is not supported in this browser.");
+	}
 
-function getTogetherSoundStepMs(view: BivectorSoundView, curvature: number) {
-	return Math.max(95, getSoundStepMs(view, curvature) * 0.62);
+	return new AudioContextCtor();
 }
 
 export class DrawingSoundEngine {
 	private context: AudioContext | null = null;
-	private inputGain: GainNode | null = null;
 	private masterGain: GainNode | null = null;
-
-	private startedAtMs: number | null = null;
-	private lastTriggerAtMs = 0;
-	private noteIndex = 0;
-	private activeStrokeId: string | null = null;
-	private togetherCursor = 0;
-	private lastTogetherLoopElapsed = 0;
-	private isRunning = false;
+	private compressor: DynamicsCompressorNode | null = null;
+	private voices = new Map<string, Voice>();
+	private clockStartSeconds: number | null = null;
 
 	async enable() {
 		const context = this.ensureContext();
@@ -322,676 +404,335 @@ export class DrawingSoundEngine {
 			await context.resume();
 		}
 
-		if (this.startedAtMs === null) {
-			this.startedAtMs = performance.now();
+		if (this.clockStartSeconds === null) {
+			this.clockStartSeconds = context.currentTime;
 		}
 
-		this.isRunning = true;
-
 		if (this.masterGain) {
-			const now = context.currentTime;
-
-			this.masterGain.gain.cancelScheduledValues(now);
-			this.masterGain.gain.setTargetAtTime(MASTER_GAIN, now, 0.18);
+			this.masterGain.gain.cancelScheduledValues(context.currentTime);
+			this.masterGain.gain.setTargetAtTime(
+				MASTER_GAIN,
+				context.currentTime,
+				0.08,
+			);
 		}
 	}
 
 	stop() {
-		this.isRunning = false;
+		const context = this.context;
+		if (!context) return;
 
-		if (!this.context || !this.masterGain) return;
+		if (this.masterGain) {
+			this.masterGain.gain.cancelScheduledValues(context.currentTime);
+			this.masterGain.gain.setTargetAtTime(0, context.currentTime, 0.04);
+		}
 
-		const now = this.context.currentTime;
+		for (const voice of this.voices.values()) {
+			this.stopVoice(voice, context.currentTime);
+		}
 
-		this.masterGain.gain.cancelScheduledValues(now);
-		this.masterGain.gain.setTargetAtTime(0.0001, now, 0.18);
+		this.voices.clear();
 	}
 
 	resetClock() {
-		this.startedAtMs = null;
-		this.lastTriggerAtMs = 0;
-		this.noteIndex = 0;
-		this.activeStrokeId = null;
-		this.togetherCursor = 0;
-		this.lastTogetherLoopElapsed = 0;
+		this.clockStartSeconds = this.context?.currentTime ?? null;
 	}
 
 	tick(
-		strokes: SonicStroke[],
-		view: BivectorSoundView,
-		traceMode: SoundTraceMode = "sequential",
+		strokes: readonly SonicStroke[],
+		bivectorView: BivectorView,
+		animationTraceMode: AnimationTraceMode,
+		visibleTermCount = 256,
 	) {
-		if (!this.isRunning || !this.context || !this.inputGain) return;
-		if (strokes.length === 0) return;
+		const context = this.context;
+		if (!context || !this.masterGain) return;
 
-		if (traceMode === "simultaneous") {
-			this.tickTogether(strokes, view);
-			return;
+		if (this.clockStartSeconds === null) {
+			this.clockStartSeconds = context.currentTime;
 		}
 
-		this.tickSequential(strokes, view);
-	}
+		const elapsedSeconds = context.currentTime - this.clockStartSeconds;
 
-	private tickSequential(strokes: SonicStroke[], view: BivectorSoundView) {
-		const nowMs = performance.now();
-
-		if (this.startedAtMs === null) {
-			this.startedAtMs = nowMs;
-		}
-
-		const { totalDurationMs } = getSequentialTimeline(strokes);
-		const elapsed = nowMs - this.startedAtMs;
-		const loopElapsed = elapsed % totalDurationMs;
-		const frame = getSequentialSoundFrame(strokes, loopElapsed);
-
-		if (!frame) return;
-
-		const sampled = samplePathAtProgress(frame.stroke.path, frame.progress);
-		const stepMs = getSoundStepMs(view, sampled.curvature);
-
-		if (nowMs - this.lastTriggerAtMs < stepMs) return;
-
-		if (frame.stroke.id !== this.activeStrokeId) {
-			this.activeStrokeId = frame.stroke.id;
-			this.noteIndex = 0;
-		}
-
-		const didTrigger = this.triggerStrokeSound({
-			stroke: frame.stroke,
-			progress: frame.progress,
-			sampled,
-			view,
-			noteOffset: 0,
+		const targets = buildRotorTargets({
+			strokes,
+			view: bivectorView,
+			traceMode: animationTraceMode,
+			visibleTermCount,
+			elapsedSeconds,
 		});
 
-		if (!didTrigger) return;
+		const activeKeys = new Set(targets.map(target => target.key));
 
-		this.noteIndex += 1;
-		this.lastTriggerAtMs = nowMs;
-	}
+		for (const target of targets) {
+			const voice =
+				this.voices.get(target.key) ??
+				this.createVoice(target.key, target.view, context);
 
-	private tickTogether(strokes: SonicStroke[], view: BivectorSoundView) {
-		const nowMs = performance.now();
-
-		if (this.startedAtMs === null) {
-			this.startedAtMs = nowMs;
+			this.voices.set(target.key, voice);
+			this.updateVoice(voice, target, context.currentTime);
 		}
 
-		const cycleDurationMs = getSimultaneousCycleDuration(strokes);
-		const elapsed = nowMs - this.startedAtMs;
-		const loopElapsed = elapsed % cycleDurationMs;
+		for (const [key, voice] of this.voices.entries()) {
+			if (activeKeys.has(key)) continue;
 
-		if (loopElapsed < this.lastTogetherLoopElapsed) {
-			this.noteIndex = 0;
-			this.togetherCursor = 0;
-			this.activeStrokeId = null;
+			this.stopVoice(voice, context.currentTime);
+			this.voices.delete(key);
 		}
-
-		this.lastTogetherLoopElapsed = loopElapsed;
-
-		const activeStrokes: ActiveSoundStroke[] = strokes
-			.map(stroke => {
-				const durationMs = getStrokeDurationMs(stroke);
-				const progress = clamp(loopElapsed / durationMs, 0, 1);
-				const sampled = samplePathAtProgress(stroke.path, progress);
-
-				return {
-					stroke,
-					progress,
-					durationMs,
-					sampled,
-				};
-			})
-			.filter(({ stroke, durationMs }) => {
-				if (loopElapsed > durationMs) return false;
-
-				return stroke.terms.some(
-					term => term.frequency !== 0 && term.amplitude > 0,
-				);
-			});
-
-		if (activeStrokes.length === 0) return;
-
-		const cursor = this.togetherCursor % activeStrokes.length;
-		const representative = activeStrokes[cursor];
-		const stepMs = getTogetherSoundStepMs(
-			view,
-			representative.sampled.curvature,
-		);
-
-		if (nowMs - this.lastTriggerAtMs < stepMs) return;
-
-		const voices = Math.min(
-			MAX_SIMULTANEOUS_SOUND_STROKES,
-			activeStrokes.length,
-		);
-		let triggeredCount = 0;
-
-		for (let voiceIndex = 0; voiceIndex < voices; voiceIndex += 1) {
-			const activeStroke =
-				activeStrokes[(cursor + voiceIndex) % activeStrokes.length];
-
-			const didTrigger = this.triggerStrokeSound({
-				stroke: activeStroke.stroke,
-				progress: activeStroke.progress,
-				sampled: activeStroke.sampled,
-				view,
-				noteOffset: voiceIndex,
-			});
-
-			if (didTrigger) {
-				triggeredCount += 1;
-			}
-		}
-
-		if (triggeredCount === 0) return;
-
-		this.activeStrokeId = "together";
-		this.noteIndex += 1;
-		this.togetherCursor = (cursor + 1) % activeStrokes.length;
-		this.lastTriggerAtMs = nowMs;
-	}
-
-	private triggerStrokeSound({
-		stroke,
-		progress,
-		sampled,
-		view,
-		noteOffset,
-	}: {
-		stroke: SonicStroke;
-		progress: number;
-		sampled: SampledPathPoint;
-		view: BivectorSoundView;
-		noteOffset: number;
-	}) {
-		const audibleTerms = stroke.terms
-			.filter(term => term.frequency !== 0 && term.amplitude > 0)
-			.slice(0, MAX_SOUND_TERMS);
-
-		if (audibleTerms.length === 0) return false;
-
-		const maxAmplitude = Math.max(
-			...audibleTerms.map(term => term.amplitude),
-			1,
-		);
-
-		const maxFrequency = Math.max(
-			...audibleTerms.map(term => Math.abs(term.frequency)),
-			1,
-		);
-
-		const tangentOffset = Math.round(
-			((sampled.tangentAngle + Math.PI) / (Math.PI * 2)) *
-				audibleTerms.length,
-		);
-
-		const pathOffset = Math.floor(progress * audibleTerms.length);
-
-		const termIndex =
-			(pathOffset + tangentOffset + (this.noteIndex + noteOffset) * 2) %
-			audibleTerms.length;
-
-		const term = audibleTerms[termIndex];
-
-		this.triggerPathNote({
-			view,
-			term,
-			termIndex,
-			maxAmplitude,
-			maxFrequency,
-			strokeWidth: stroke.width,
-			sampled,
-		});
-
-		return true;
 	}
 
 	private ensureContext() {
 		if (this.context) return this.context;
 
-		const AudioContextConstructor = getAudioContextConstructor();
-
-		if (!AudioContextConstructor) {
-			throw new Error("Web Audio is not supported in this browser.");
-		}
-
-		const context = new AudioContextConstructor();
-
-		const inputGain = context.createGain();
-		const dryGain = context.createGain();
-		const delay = context.createDelay(2);
-		const delayFeedback = context.createGain();
-		const delayReturn = context.createGain();
-		const highpass = context.createBiquadFilter();
-		const lowpass = context.createBiquadFilter();
-		const compressor = context.createDynamicsCompressor();
+		const context = createAudioContext();
 		const masterGain = context.createGain();
+		const compressor = context.createDynamicsCompressor();
 
-		inputGain.gain.value = 1;
-		dryGain.gain.value = 0.88;
+		masterGain.gain.value = 0;
 
-		delay.delayTime.value = 0.58;
-		delayFeedback.gain.value = 0.2;
-		delayReturn.gain.value = 0.14;
+		compressor.threshold.value = -22;
+		compressor.knee.value = 24;
+		compressor.ratio.value = 5;
+		compressor.attack.value = 0.012;
+		compressor.release.value = 0.18;
 
-		highpass.type = "highpass";
-		highpass.frequency.value = 90;
-		highpass.Q.value = 0.5;
-
-		lowpass.type = "lowpass";
-		lowpass.frequency.value = 2600;
-		lowpass.Q.value = 0.42;
-
-		compressor.threshold.value = -28;
-		compressor.knee.value = 26;
-		compressor.ratio.value = 2.8;
-		compressor.attack.value = 0.018;
-		compressor.release.value = 0.36;
-
-		masterGain.gain.value = 0.0001;
-
-		inputGain.connect(dryGain);
-		dryGain.connect(highpass);
-
-		inputGain.connect(delay);
-		delay.connect(delayFeedback);
-		delayFeedback.connect(delay);
-		delay.connect(delayReturn);
-		delayReturn.connect(highpass);
-
-		highpass.connect(lowpass);
-		lowpass.connect(compressor);
-		compressor.connect(masterGain);
-		masterGain.connect(context.destination);
+		masterGain.connect(compressor);
+		compressor.connect(context.destination);
 
 		this.context = context;
-		this.inputGain = inputGain;
 		this.masterGain = masterGain;
+		this.compressor = compressor;
 
 		return context;
 	}
 
-	private getScaleStep({
-		sampled,
-		term,
-		maxFrequency,
-		view,
-	}: {
-		sampled: SampledPathPoint;
-		term: FourierTerm;
-		maxFrequency: number;
-		view: BivectorSoundView;
-	}) {
-		const totalScaleSteps = SCALE.length * OCTAVE_COUNT;
+	private createVoice(
+		key: string,
+		view: BivectorView,
+		context: AudioContext,
+	) {
+		if (!this.masterGain) {
+			throw new Error("Audio graph was not initialized.");
+		}
 
-		const normalizedFrequency =
-			Math.log2(1 + Math.abs(term.frequency)) /
-			Math.log2(1 + maxFrequency);
+		const gain = context.createGain();
+		const pan = context.createStereoPanner();
+		const filter = context.createBiquadFilter();
 
-		const verticalContour = Math.round(
-			(1 - sampled.normalizedY) * (totalScaleSteps - 1),
-		);
+		gain.gain.value = 0;
+		filter.type = view === "blade" ? "bandpass" : "lowpass";
+		filter.frequency.value = view === "companion" ? 1800 : 1400;
+		filter.Q.value = view === "blade" ? 1.4 : 0.72;
 
-		const tangentLift = Math.round(Math.sin(sampled.tangentAngle) * 1.5);
-		const spectralLift = Math.round(normalizedFrequency * 2);
-		const curvatureLift = sampled.curvature > 0.46 ? 1 : 0;
+		filter.connect(pan);
+		pan.connect(gain);
+		gain.connect(this.masterGain);
 
-		const viewOffset = view === "disk" ? 2 : view === "companion" ? -1 : 0;
-
-		return clamp(
-			verticalContour +
-				tangentLift +
-				spectralLift +
-				curvatureLift +
-				viewOffset,
-			0,
-			totalScaleSteps - 1,
-		);
-	}
-
-	private getMidiFromScaleStep(scaleStep: number) {
-		const octave = Math.floor(scaleStep / SCALE.length);
-		const degree = SCALE[scaleStep % SCALE.length];
-
-		return ROOT_MIDI + octave * 12 + degree;
-	}
-
-	private triggerPathNote({
-		view,
-		term,
-		termIndex,
-		maxAmplitude,
-		maxFrequency,
-		strokeWidth,
-		sampled,
-	}: {
-		view: BivectorSoundView;
-		term: FourierTerm;
-		termIndex: number;
-		maxAmplitude: number;
-		maxFrequency: number;
-		strokeWidth: number;
-		sampled: SampledPathPoint;
-	}) {
-		if (!this.context || !this.inputGain) return;
-
-		const scaleStep = this.getScaleStep({
-			sampled,
-			term,
-			maxFrequency,
+		const oscillators = this.createOscillatorsForView(
 			view,
-		});
+			context,
+			filter,
+		);
 
-		const midi = this.getMidiFromScaleStep(scaleStep);
-		const frequency = midiToHz(midi);
+		for (const oscillator of oscillators) {
+			oscillator.start();
+		}
 
-		const amplitudeRatio = clamp(term.amplitude / maxAmplitude, 0, 1);
-		const orientationPan = term.frequency < 0 ? -0.07 : 0.07;
-		const pathPan = (sampled.normalizedX - 0.5) * 0.42;
-		const pan = clamp(pathPan + orientationPan, -0.42, 0.42);
+		return {
+			key,
+			view,
+			gain,
+			pan,
+			filter,
+			oscillators,
+			stopping: false,
+		};
+	}
+
+	private createOscillatorsForView(
+		view: BivectorView,
+		context: AudioContext,
+		destination: AudioNode,
+	) {
+		if (view === "blade") {
+			const main = context.createOscillator();
+			const companion = context.createOscillator();
+			const mainGain = context.createGain();
+			const companionGain = context.createGain();
+
+			main.type = "sine";
+			companion.type = "triangle";
+			mainGain.gain.value = 0.88;
+			companionGain.gain.value = 0.12;
+
+			main.connect(mainGain);
+			companion.connect(companionGain);
+			mainGain.connect(destination);
+			companionGain.connect(destination);
+
+			return [main, companion];
+		}
 
 		if (view === "disk") {
-			this.triggerMusicalCup({
-				frequency,
-				pan,
-				amplitudeRatio,
-				curvature: sampled.curvature,
-				strokeWidth,
-			});
+			const main = context.createOscillator();
+			const body = context.createOscillator();
+			const mainGain = context.createGain();
+			const bodyGain = context.createGain();
+
+			main.type = "triangle";
+			body.type = "sine";
+			mainGain.gain.value = 0.72;
+			bodyGain.gain.value = 0.2;
+
+			main.connect(mainGain);
+			body.connect(bodyGain);
+			mainGain.connect(destination);
+			bodyGain.connect(destination);
+
+			return [main, body];
+		}
+
+		const left = context.createOscillator();
+		const right = context.createOscillator();
+		const center = context.createOscillator();
+		const leftGain = context.createGain();
+		const rightGain = context.createGain();
+		const centerGain = context.createGain();
+
+		left.type = "sine";
+		right.type = "sine";
+		center.type = "triangle";
+
+		leftGain.gain.value = 0.38;
+		rightGain.gain.value = 0.38;
+		centerGain.gain.value = 0.16;
+
+		left.connect(leftGain);
+		right.connect(rightGain);
+		center.connect(centerGain);
+
+		leftGain.connect(destination);
+		rightGain.connect(destination);
+		centerGain.connect(destination);
+
+		return [left, right, center];
+	}
+
+	private updateVoice(voice: Voice, target: RotorTarget, now: number) {
+		voice.stopping = false;
+
+		voice.gain.gain.cancelScheduledValues(now);
+		voice.gain.gain.setTargetAtTime(target.gain, now, 0.08);
+
+		voice.pan.pan.cancelScheduledValues(now);
+		voice.pan.pan.setTargetAtTime(target.pan, now, 0.12);
+
+		voice.filter.frequency.cancelScheduledValues(now);
+		voice.filter.frequency.setTargetAtTime(target.filterHz, now, 0.12);
+
+		if (voice.view === "blade") {
+			voice.oscillators[0]?.frequency.setTargetAtTime(
+				target.frequencyHz,
+				now,
+				0.08,
+			);
+			voice.oscillators[1]?.frequency.setTargetAtTime(
+				target.frequencyHz * 2,
+				now,
+				0.08,
+			);
+
+			voice.oscillators[0]?.detune.setTargetAtTime(
+				target.detuneCents,
+				now,
+				0.1,
+			);
+			voice.oscillators[1]?.detune.setTargetAtTime(
+				target.detuneCents * 0.4,
+				now,
+				0.1,
+			);
 
 			return;
 		}
 
-		if (view === "companion") {
-			this.triggerCompanionPair({
-				scaleStep,
-				pan,
-				amplitudeRatio,
-				curvature: sampled.curvature,
-				strokeWidth,
-				isNegativeFrequency: term.frequency < 0,
-			});
+		if (voice.view === "disk") {
+			voice.oscillators[0]?.frequency.setTargetAtTime(
+				target.frequencyHz,
+				now,
+				0.1,
+			);
+			voice.oscillators[1]?.frequency.setTargetAtTime(
+				target.frequencyHz / 2,
+				now,
+				0.1,
+			);
+
+			voice.oscillators[0]?.detune.setTargetAtTime(
+				target.detuneCents * 0.5,
+				now,
+				0.1,
+			);
+			voice.oscillators[1]?.detune.setTargetAtTime(0, now, 0.1);
 
 			return;
 		}
 
-		this.triggerRainDrum({
-			frequency,
-			pan,
-			amplitudeRatio,
-			curvature: sampled.curvature,
-			strokeWidth,
-			termIndex,
-		});
-	}
-
-	private triggerMusicalCup({
-		frequency,
-		pan,
-		amplitudeRatio,
-		curvature,
-		strokeWidth,
-	}: {
-		frequency: number;
-		pan: number;
-		amplitudeRatio: number;
-		curvature: number;
-		strokeWidth: number;
-	}) {
-		const gain = 0.008 + 0.03 * amplitudeRatio ** 0.78;
-		const attack = 0.085 + Math.min(0.045, strokeWidth * 0.003);
-		const decay = 3.25 + amplitudeRatio * 2.4 + curvature * 0.8;
-
-		this.triggerSineCluster({
-			frequency,
-			pan,
-			gain,
-			attack,
-			decay,
-			partials: [
-				{ ratio: 1, gain: 1 },
-				{ ratio: 2, gain: 0.16 },
-				{ ratio: 3, gain: 0.045 },
-			],
-			drift: 0.996,
-		});
-	}
-
-	private triggerRainDrum({
-		frequency,
-		pan,
-		amplitudeRatio,
-		curvature,
-		strokeWidth,
-		termIndex,
-	}: {
-		frequency: number;
-		pan: number;
-		amplitudeRatio: number;
-		curvature: number;
-		strokeWidth: number;
-		termIndex: number;
-	}) {
-		const gain = 0.009 + 0.038 * amplitudeRatio ** 0.76;
-		const attack = 0.018 + Math.min(0.025, strokeWidth * 0.002);
-		const decay = 0.95 + amplitudeRatio * 1.2 + curvature * 0.45;
-
-		this.triggerSineCluster({
-			frequency,
-			pan,
-			gain,
-			attack,
-			decay,
-			partials: [
-				{ ratio: 1, gain: 1 },
-				{ ratio: 2, gain: 0.12 },
-			],
-			drift: 0.992,
-		});
-
-		if (curvature > 0.32 || termIndex % 4 === 0) {
-			this.triggerSoftDroplet({
-				frequency: frequency * 2,
-				pan: clamp(pan * 1.2, -0.5, 0.5),
-				gain: gain * 0.32,
-				delaySeconds: 0.035,
-			});
-		}
-	}
-
-	private triggerCompanionPair({
-		scaleStep,
-		pan,
-		amplitudeRatio,
-		curvature,
-		strokeWidth,
-		isNegativeFrequency,
-	}: {
-		scaleStep: number;
-		pan: number;
-		amplitudeRatio: number;
-		curvature: number;
-		strokeWidth: number;
-		isNegativeFrequency: boolean;
-	}) {
-		const companionStep = clamp(
-			scaleStep + (isNegativeFrequency ? -2 : 2),
-			0,
-			SCALE.length * OCTAVE_COUNT - 1,
+		voice.oscillators[0]?.frequency.setTargetAtTime(
+			target.frequencyHz,
+			now,
+			0.1,
+		);
+		voice.oscillators[1]?.frequency.setTargetAtTime(
+			target.frequencyHz,
+			now,
+			0.1,
+		);
+		voice.oscillators[2]?.frequency.setTargetAtTime(
+			target.frequencyHz * 1.5,
+			now,
+			0.1,
 		);
 
-		const firstFrequency = midiToHz(this.getMidiFromScaleStep(scaleStep));
-		const secondFrequency = midiToHz(
-			this.getMidiFromScaleStep(companionStep),
+		voice.oscillators[0]?.detune.setTargetAtTime(
+			target.detuneCents - 7,
+			now,
+			0.1,
 		);
-
-		const gain = 0.006 + 0.024 * amplitudeRatio ** 0.8;
-		const attack = 0.055 + Math.min(0.035, strokeWidth * 0.0025);
-		const decay = 2.1 + amplitudeRatio * 1.6 + curvature * 0.45;
-
-		this.triggerSineCluster({
-			frequency: firstFrequency,
-			pan,
-			gain,
-			attack,
-			decay,
-			partials: [
-				{ ratio: 1, gain: 1 },
-				{ ratio: 2, gain: 0.12 },
-			],
-			drift: 0.997,
-		});
-
-		this.triggerSineCluster({
-			frequency: secondFrequency,
-			pan: clamp(-pan * 0.85, -0.42, 0.42),
-			gain: gain * 0.72,
-			attack: attack + 0.025,
-			decay: decay * 0.92,
-			partials: [
-				{ ratio: 1, gain: 1 },
-				{ ratio: 2, gain: 0.1 },
-			],
-			drift: 0.998,
-			delaySeconds: 0.055,
-		});
-	}
-
-	private triggerSineCluster({
-		frequency,
-		pan,
-		gain,
-		attack,
-		decay,
-		partials,
-		drift,
-		delaySeconds = 0,
-	}: {
-		frequency: number;
-		pan: number;
-		gain: number;
-		attack: number;
-		decay: number;
-		partials: SinePartial[];
-		drift: number;
-		delaySeconds?: number;
-	}) {
-		if (!this.context || !this.inputGain) return;
-
-		const context = this.context;
-		const startAt = context.currentTime + delaySeconds;
-
-		const panner = context.createStereoPanner();
-		const voiceGain = context.createGain();
-
-		panner.pan.setValueAtTime(pan, startAt);
-
-		voiceGain.gain.setValueAtTime(0.0001, startAt);
-		voiceGain.gain.exponentialRampToValueAtTime(
-			Math.max(0.0002, gain),
-			startAt + attack,
+		voice.oscillators[1]?.detune.setTargetAtTime(
+			target.detuneCents + 7,
+			now,
+			0.1,
 		);
-		voiceGain.gain.exponentialRampToValueAtTime(
-			0.0001,
-			startAt + attack + decay,
-		);
-
-		panner.connect(voiceGain);
-		voiceGain.connect(this.inputGain);
-
-		for (const partial of partials) {
-			const oscillator = context.createOscillator();
-			const partialGain = context.createGain();
-
-			oscillator.type = "sine";
-			oscillator.frequency.setValueAtTime(
-				frequency * partial.ratio,
-				startAt,
-			);
-			oscillator.frequency.exponentialRampToValueAtTime(
-				frequency * partial.ratio * drift,
-				startAt + Math.min(decay, 2.8),
-			);
-			oscillator.detune.setValueAtTime(partial.detune ?? 0, startAt);
-
-			partialGain.gain.setValueAtTime(partial.gain, startAt);
-
-			oscillator.connect(partialGain);
-			partialGain.connect(panner);
-
-			oscillator.start(startAt);
-			oscillator.stop(startAt + attack + decay + 0.28);
-
-			oscillator.addEventListener("ended", () => {
-				oscillator.disconnect();
-				partialGain.disconnect();
-			});
-		}
-
-		window.setTimeout(
-			() => {
-				panner.disconnect();
-				voiceGain.disconnect();
-			},
-			(delaySeconds + attack + decay + 0.45) * 1000,
+		voice.oscillators[2]?.detune.setTargetAtTime(
+			target.detuneCents * 0.25,
+			now,
+			0.1,
 		);
 	}
 
-	private triggerSoftDroplet({
-		frequency,
-		pan,
-		gain,
-		delaySeconds,
-	}: {
-		frequency: number;
-		pan: number;
-		gain: number;
-		delaySeconds: number;
-	}) {
-		if (!this.context || !this.inputGain) return;
+	private stopVoice(voice: Voice, now: number) {
+		if (voice.stopping) return;
 
-		const context = this.context;
-		const startAt = context.currentTime + delaySeconds;
+		voice.stopping = true;
+		voice.gain.gain.cancelScheduledValues(now);
+		voice.gain.gain.setTargetAtTime(0, now, 0.04);
 
-		const oscillator = context.createOscillator();
-		const filter = context.createBiquadFilter();
-		const panner = context.createStereoPanner();
-		const pingGain = context.createGain();
+		window.setTimeout(() => {
+			for (const oscillator of voice.oscillators) {
+				try {
+					oscillator.stop();
+				} catch {
+					// Oscillator may already be stopped.
+				}
+			}
 
-		oscillator.type = "sine";
-		oscillator.frequency.setValueAtTime(frequency, startAt);
-		oscillator.frequency.exponentialRampToValueAtTime(
-			frequency * 0.74,
-			startAt + 0.24,
-		);
-
-		filter.type = "bandpass";
-		filter.frequency.value = frequency;
-		filter.Q.value = 5.5;
-
-		panner.pan.setValueAtTime(pan, startAt);
-
-		pingGain.gain.setValueAtTime(0.0001, startAt);
-		pingGain.gain.exponentialRampToValueAtTime(
-			Math.max(0.0002, gain),
-			startAt + 0.014,
-		);
-		pingGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.48);
-
-		oscillator.connect(filter);
-		filter.connect(panner);
-		panner.connect(pingGain);
-		pingGain.connect(this.inputGain);
-
-		oscillator.start(startAt);
-		oscillator.stop(startAt + 0.56);
-
-		oscillator.addEventListener("ended", () => {
-			oscillator.disconnect();
-			filter.disconnect();
-			panner.disconnect();
-			pingGain.disconnect();
-		});
+			try {
+				voice.gain.disconnect();
+				voice.pan.disconnect();
+				voice.filter.disconnect();
+			} catch {
+				// Nodes may already be disconnected.
+			}
+		}, 220);
 	}
 }

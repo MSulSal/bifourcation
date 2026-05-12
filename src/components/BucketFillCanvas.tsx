@@ -18,6 +18,16 @@ type BucketFillCanvasProps = {
 	onCommitFill: (fill: BucketFillObject) => void;
 };
 
+const BUCKET_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+	<path d="M8 17L17 8L26 17L17 26L8 17Z" fill="black" stroke="white" stroke-width="3" stroke-linejoin="round"/>
+	<path d="M8 17L17 8L26 17L17 26L8 17Z" fill="none" stroke="black" stroke-width="1.7" stroke-linejoin="round"/>
+	<path d="M12 17H22" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"/>
+	<path d="M12 17H22" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round"/>
+	<path d="M24 28C24 28 29 22.8 29 20.2C29 18.3 27.4 17.2 24 17.2C20.6 17.2 19 18.3 19 20.2C19 22.8 24 28 24 28Z" fill="black" stroke="white" stroke-width="2"/>
+</svg>
+`)}") 8 24, crosshair`;
+
 function getPointerPoint(
 	event: ReactPointerEvent<HTMLCanvasElement>,
 	canvas: HTMLCanvasElement,
@@ -229,10 +239,9 @@ export function BucketFillCanvas({
 			ref={canvasRef}
 			className={[
 				"absolute inset-0 z-20 block h-full w-full touch-none",
-				enabled
-					? "pointer-events-auto cursor-crosshair"
-					: "pointer-events-none",
+				enabled ? "pointer-events-auto" : "pointer-events-none",
 			].join(" ")}
+			style={enabled ? { cursor: BUCKET_CURSOR } : undefined}
 			onPointerDown={handlePointerDown}
 		/>
 	);

@@ -17,6 +17,7 @@ type ObjectTransformCanvasProps = {
 	selectedObjectId: string | null;
 	enabled: boolean;
 	onSelectObject: (id: string | null) => void;
+	onRequestExitEdit: () => void;
 	onBeginEdit: () => void;
 	onChangeShape: (
 		id: string,
@@ -393,6 +394,7 @@ export function ObjectTransformCanvas({
 	selectedObjectId,
 	enabled,
 	onSelectObject,
+	onRequestExitEdit,
 	onBeginEdit,
 	onChangeShape,
 	onEndEdit,
@@ -583,7 +585,9 @@ export function ObjectTransformCanvas({
 		selectedObject = getShapeAtPoint(objects, point);
 
 		if (!selectedObject) {
+			event.preventDefault();
 			onSelectObject(null);
+			onRequestExitEdit();
 			return;
 		}
 
@@ -705,7 +709,7 @@ export function ObjectTransformCanvas({
 		resizeObserver.observe(canvas);
 
 		return () => resizeObserver.disconnect();
-	});
+	}, []);
 
 	useEffect(() => {
 		drawSelection();

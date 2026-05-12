@@ -1304,7 +1304,12 @@ function App() {
 		void activeEngine.start();
 
 		function tickSound() {
-			activeEngine.tick(sonicStrokes, bivectorView, animationTraceMode);
+			activeEngine.tick(
+				sonicStrokes,
+				bivectorView,
+				animationTraceMode,
+				effectiveVisibleTermCount,
+			);
 			soundFrameRef.current = requestAnimationFrame(tickSound);
 		}
 
@@ -1321,6 +1326,7 @@ function App() {
 		sonicStrokes,
 		bivectorView,
 		animationTraceMode,
+		effectiveVisibleTermCount,
 	]);
 
 	return (
@@ -1400,6 +1406,7 @@ function App() {
 						selectedObjectId={selectedObjectId}
 						enabled={isEditMode}
 						onSelectObject={setSelectedObjectId}
+						onRequestExitEdit={enterDrawMode}
 						onBeginEdit={beginObjectEdit}
 						onChangeShape={changeShapeObject}
 						onEndEdit={endObjectEdit}
@@ -2121,7 +2128,8 @@ function App() {
 								Each visible term is a coefficient carried by an
 								e₁e₂ rotor. Zero hides the reconstruction; fewer
 								rotors show the broad form; more rotors recover
-								sharper detail.
+								sharper detail. Sound uses the same visible
+								rotors.
 							</p>
 						</section>
 					</div>
