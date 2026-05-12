@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ChangeEvent,
+	type SetStateAction,
+} from "react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { RotorCanvas, type BivectorView } from "./components/RotorCanvas";
 import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
+import { createShapeStroke, type ShapeKind } from "./math/shapes";
 import type { Stroke } from "./types/geometry";
 
 const PEN_COLORS = [
@@ -16,6 +24,19 @@ const PEN_COLORS = [
 	"#f2994a",
 	"#56ccf2",
 	"#eb5757",
+];
+
+const SHAPE_TOOLS: {
+	kind: ShapeKind;
+	label: string;
+}[] = [
+	{ kind: "line", label: "Line" },
+	{ kind: "circle", label: "Circle" },
+	{ kind: "rectangle", label: "Rect" },
+	{ kind: "triangle", label: "Tri" },
+	{ kind: "star", label: "Star" },
+	{ kind: "spiral", label: "Spiral" },
+	{ kind: "sine", label: "Sine" },
 ];
 
 const DEFAULT_PEN_COLOR = PEN_COLORS[0];
@@ -37,8 +58,17 @@ const INACTIVE_BUTTON_CLASS =
 
 type AppMode = "draw" | "animate";
 
+type DrawingHistory = {
+	past: Stroke[][];
+	future: Stroke[][];
+};
+
 function clampNumber(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
+}
+
+function areStrokeArraysSame(a: Stroke[], b: Stroke[]) {
+	return a === b;
 }
 
 function isBivectorView(value: string | null): value is BivectorView {
@@ -95,6 +125,10 @@ function App() {
 
 	const [clearSignal, setClearSignal] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
+	const [history, setHistory] = useState<DrawingHistory>({
+		past: [],
+		future: [],
+	});
 	const [mode, setMode] = useState<AppMode>("draw");
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -164,6 +198,8 @@ function App() {
 
 	const isAnimationMode = mode === "animate";
 	const isCanvasInteractive = mode === "draw";
+	const canUndo = history.past.length > 0;
+	const canRedo = history.future.length > 0;
 
 	function getSoundEngine() {
 		if (!soundEngineRef.current) {
@@ -180,26 +216,104 @@ function App() {
 		}
 	}
 
-	function clearEverything() {
+	function resetAnimationSideEffects() {
 		setIsAnimationPlaying(false);
 		setMode("draw");
 		setIsSnapshotMenuOpen(false);
-		setImageTraceError(null);
-		setClearSignal(value => value + 1);
-		setStrokes([]);
 
 		stopSoundFrame();
 		soundEngineRef.current?.stop();
 		soundEngineRef.current?.resetClock();
 	}
 
-	function enterDrawMode() {
-		setIsAnimationPlaying(false);
-		setMode("draw");
+	function commitStrokes(update: SetStateAction<Stroke[]>) {
+		resetAnimationSideEffects();
+		setImageTraceError(null);
 
-		stopSoundFrame();
-		soundEngineRef.current?.stop();
-		soundEngineRef.current?.resetClock();
+		setStrokes(currentStrokes => {
+			const nextStrokes =
+				typeof update === "function" ? update(currentStrokes) : update;
+
+			if (areStrokeArraysSame(currentStrokes, nextStrokes)) {
+				return currentStrokes;
+			}
+
+			setHistory(currentHistory => ({
+				past: [...currentHistory.past, currentStrokes],
+				future: [],
+			}));
+
+			return nextStrokes;
+		});
+	}
+
+	function undo() {
+		if (!canUndo) return;
+
+		resetAnimationSideEffects();
+		setImageTraceError(null);
+
+		setHistory(currentHistory => {
+			const previous = currentHistory.past.at(-1);
+
+			if (!previous) return currentHistory;
+
+			setStrokes(currentStrokes => {
+				setHistory(latestHistory => ({
+					past: latestHistory.past.slice(0, -1),
+					future: [currentStrokes, ...latestHistory.future],
+				}));
+
+				return previous;
+			});
+
+			return currentHistory;
+		});
+	}
+
+	function redo() {
+		if (!canRedo) return;
+
+		resetAnimationSideEffects();
+		setImageTraceError(null);
+
+		setHistory(currentHistory => {
+			const next = currentHistory.future[0];
+
+			if (!next) return currentHistory;
+
+			setStrokes(currentStrokes => {
+				setHistory(latestHistory => ({
+					past: [...latestHistory.past, currentStrokes],
+					future: latestHistory.future.slice(1),
+				}));
+
+				return next;
+			});
+
+			return currentHistory;
+		});
+	}
+
+	function clearEverything() {
+		resetAnimationSideEffects();
+		setImageTraceError(null);
+		setClearSignal(value => value + 1);
+
+		setStrokes(currentStrokes => {
+			if (currentStrokes.length === 0) return currentStrokes;
+
+			setHistory(currentHistory => ({
+				past: [...currentHistory.past, currentStrokes],
+				future: [],
+			}));
+
+			return [];
+		});
+	}
+
+	function enterDrawMode() {
+		resetAnimationSideEffects();
 	}
 
 	async function toggleAnimation() {
@@ -243,6 +357,37 @@ function App() {
 		}
 	}
 
+	function addShape(kind: ShapeKind) {
+		const stage = canvasStageRef.current;
+		if (!stage) return;
+
+		const rect = stage.getBoundingClientRect();
+		const size = Math.min(rect.width, rect.height) * 0.34;
+		const shapeWidth =
+			kind === "line" || kind === "sine" ? size * 1.5 : size;
+		const shapeHeight =
+			kind === "line" ? size * 0.25 : kind === "sine" ? size * 0.5 : size;
+
+		const shapeStroke = createShapeStroke({
+			kind,
+			bounds: {
+				center: {
+					x: rect.width / 2,
+					y: rect.height / 2,
+				},
+				width: shapeWidth,
+				height: shapeHeight,
+			},
+			style: {
+				color: penColor,
+				width: penWidth,
+			},
+			rotation: 0,
+		});
+
+		commitStrokes(currentStrokes => [...currentStrokes, shapeStroke]);
+	}
+
 	async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
 		const file = event.target.files?.[0];
 		event.target.value = "";
@@ -254,12 +399,7 @@ function App() {
 
 		setIsTracingImage(true);
 		setImageTraceError(null);
-		setIsAnimationPlaying(false);
-		setMode("draw");
-
-		stopSoundFrame();
-		soundEngineRef.current?.stop();
-		soundEngineRef.current?.resetClock();
+		resetAnimationSideEffects();
 
 		try {
 			const rect = stage.getBoundingClientRect();
@@ -281,7 +421,10 @@ function App() {
 				return;
 			}
 
-			setStrokes(currentStrokes => [...currentStrokes, ...tracedStrokes]);
+			commitStrokes(currentStrokes => [
+				...currentStrokes,
+				...tracedStrokes,
+			]);
 		} catch (error) {
 			console.error("Image tracing failed.", error);
 			setImageTraceError("Could not trace that image.");
@@ -412,6 +555,42 @@ function App() {
 	}, [isSoundEnabled]);
 
 	useEffect(() => {
+		function handleKeyDown(event: KeyboardEvent) {
+			const target = event.target as HTMLElement | null;
+			const isTyping =
+				target?.tagName === "INPUT" ||
+				target?.tagName === "TEXTAREA" ||
+				target?.isContentEditable;
+
+			if (isTyping) return;
+
+			const isUndo =
+				(event.metaKey || event.ctrlKey) &&
+				!event.shiftKey &&
+				event.key.toLowerCase() === "z";
+			const isRedo =
+				(event.metaKey || event.ctrlKey) &&
+				((event.shiftKey && event.key.toLowerCase() === "z") ||
+					event.key.toLowerCase() === "y");
+
+			if (isUndo) {
+				event.preventDefault();
+				undo();
+				return;
+			}
+
+			if (isRedo) {
+				event.preventDefault();
+				redo();
+			}
+		}
+
+		window.addEventListener("keydown", handleKeyDown);
+
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [canUndo, canRedo]);
+
+	useEffect(() => {
 		stopSoundFrame();
 
 		const engine = soundEngineRef.current;
@@ -496,7 +675,7 @@ function App() {
 							clearSignal={clearSignal}
 							penColor={penColor}
 							penWidth={penWidth}
-							onStrokesChange={setStrokes}
+							onStrokesChange={commitStrokes}
 						/>
 					</div>
 
@@ -586,6 +765,60 @@ function App() {
 						].join(" ")}
 					>
 						<div className="flex flex-col gap-3">
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									History
+								</p>
+
+								<div className="grid grid-cols-2 gap-2">
+									<button
+										className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+										onClick={undo}
+										disabled={!canUndo}
+									>
+										Undo
+									</button>
+
+									<button
+										className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+										onClick={redo}
+										disabled={!canRedo}
+									>
+										Redo
+									</button>
+								</div>
+
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Supports drawn strokes, image imports,
+									shapes, and clear actions. Shortcuts:
+									Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
+								</p>
+							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Shapes
+								</p>
+
+								<div className="grid grid-cols-2 gap-2">
+									{SHAPE_TOOLS.map(shape => (
+										<button
+											key={shape.kind}
+											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
+											onClick={() => addShape(shape.kind)}
+										>
+											{shape.label}
+										</button>
+									))}
+								</div>
+
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Shapes are inserted as normal strokes, so
+									they use the same Fourier rotor pipeline as
+									freehand drawing and traced images.
+								</p>
+							</section>
+
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
 									Color
