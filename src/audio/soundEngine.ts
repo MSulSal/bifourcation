@@ -322,6 +322,7 @@ export class DrawingSoundEngine {
 	private states = new Map<string, StrokeSoundState>();
 	private frameCounter = 0;
 	private isRunning = false;
+	private volume = 1;
 
 	async enable() {
 		const context = this.ensureContext();
@@ -329,6 +330,25 @@ export class DrawingSoundEngine {
 		if (context.state === "suspended") {
 			await context.resume();
 		}
+	}
+
+	setVolume(volume: number) {
+		this.volume = clamp(volume, 0, 1);
+
+		if (!this.context || !this.masterGain || !this.isRunning) return;
+
+		const now = this.context.currentTime;
+
+		this.masterGain.gain.cancelScheduledValues(now);
+		this.masterGain.gain.setTargetAtTime(
+			this.getMasterGainTarget(),
+			now,
+			0.04,
+		);
+	}
+
+	private getMasterGainTarget() {
+		return MASTER_GAIN * this.volume ** 1.6;
 	}
 
 	async start() {
@@ -348,7 +368,11 @@ export class DrawingSoundEngine {
 			const now = context.currentTime;
 
 			this.masterGain.gain.cancelScheduledValues(now);
-			this.masterGain.gain.setTargetAtTime(MASTER_GAIN, now, 0.06);
+			this.masterGain.gain.setTargetAtTime(
+				this.getMasterGainTarget(),
+				now,
+				0.06,
+			);
 		}
 	}
 

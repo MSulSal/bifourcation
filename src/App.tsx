@@ -93,6 +93,7 @@ const DEFAULT_PEN_WIDTH = 4;
 const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
 const DEFAULT_ANIMATION_TRACE_MODE: AnimationTraceMode = "sequential";
 const DEFAULT_VISIBLE_TERM_COUNT = MAX_FOURIER_TERMS;
+const DEFAULT_SOUND_VOLUME = 0.35;
 const PASTE_OFFSET = 24;
 
 const STORAGE_KEYS = {
@@ -100,6 +101,7 @@ const STORAGE_KEYS = {
 	penWidth: "bifourcation.penWidth",
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
+	soundVolume: "bifourcation.soundVolume",
 	animationTraceMode: "bifourcation.animationTraceMode",
 	visibleTermCount: "bifourcation.visibleTermCount",
 } as const;
@@ -248,6 +250,14 @@ function readStoredAnimationTraceMode(): AnimationTraceMode {
 
 function readStoredSoundEnabled() {
 	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
+}
+
+function readStoredSoundVolume() {
+	const storedVolume = Number(readStoredValue(STORAGE_KEYS.soundVolume));
+
+	if (!Number.isFinite(storedVolume)) return DEFAULT_SOUND_VOLUME;
+
+	return clampNumber(storedVolume, 0, 1);
 }
 
 function ShapeIcon({ kind }: { kind: ShapeKind }) {
@@ -567,6 +577,7 @@ function App() {
 	const [isSoundEnabled, setIsSoundEnabled] = useState(
 		readStoredSoundEnabled,
 	);
+	const [soundVolume, setSoundVolume] = useState(readStoredSoundVolume);
 	const [isTracingImage, setIsTracingImage] = useState(false);
 	const [imageTraceError, setImageTraceError] = useState<string | null>(null);
 	const [selectedShape, setSelectedShape] = useState<ShapeKind | null>(null);
@@ -680,9 +691,17 @@ function App() {
 	function getSoundEngine() {
 		if (!soundEngineRef.current) {
 			soundEngineRef.current = new DrawingSoundEngine();
+			soundEngineRef.current.setVolume(soundVolume);
 		}
 
 		return soundEngineRef.current;
+	}
+
+	function changeSoundVolume(nextVolume: number) {
+		const normalizedVolume = clampNumber(nextVolume, 0, 1);
+
+		setSoundVolume(normalizedVolume);
+		soundEngineRef.current?.setVolume(normalizedVolume);
 	}
 
 	function handleRotorSoundFrame(frame: RotorSoundFrame) {
@@ -844,6 +863,7 @@ function App() {
 		if (isStartingAnimation && isSoundEnabled) {
 			try {
 				const engine = getSoundEngine();
+				engine.setVolume(soundVolume);
 				await engine.enable();
 			} catch (error) {
 				console.error("Unable to start audio engine.", error);
@@ -866,6 +886,7 @@ function App() {
 
 		try {
 			const engine = getSoundEngine();
+			engine.setVolume(soundVolume);
 			await engine.enable();
 			setIsSoundEnabled(true);
 		} catch (error) {
@@ -1204,6 +1225,11 @@ function App() {
 	}, [isSoundEnabled]);
 
 	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.soundVolume, String(soundVolume));
+		soundEngineRef.current?.setVolume(soundVolume);
+	}, [soundVolume]);
+
+	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
 			const target = event.target as HTMLElement | null;
 			const isTyping =
@@ -1288,6 +1314,7 @@ function App() {
 
 		let isCancelled = false;
 		const activeEngine = getSoundEngine();
+		activeEngine.setVolume(soundVolume);
 
 		void activeEngine.start().catch(error => {
 			if (isCancelled) return;
@@ -1300,7 +1327,13 @@ function App() {
 			isCancelled = true;
 			activeEngine.stop();
 		};
-	}, [isSoundEnabled, isAnimationPlaying, isAnimationMode, hasAnimationData]);
+	}, [
+		isSoundEnabled,
+		isAnimationPlaying,
+		isAnimationMode,
+		hasAnimationData,
+		soundVolume,
+	]);
 
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -1645,6 +1678,37 @@ function App() {
 												: "Together"}
 										</button>
 									))}
+								</div>
+							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<div className="mb-3 flex items-center justify-between">
+									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Sound
+									</p>
+
+									<span className="text-sm font-medium text-zinc-200">
+										{Math.round(soundVolume * 100)}%
+									</span>
+								</div>
+
+								<input
+									className="w-full accent-zinc-50"
+									type="range"
+									min={0}
+									max={100}
+									step={1}
+									value={Math.round(soundVolume * 100)}
+									onChange={event =>
+										changeSoundVolume(
+											Number(event.target.value) / 100,
+										)
+									}
+								/>
+
+								<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+									<span>Silent</span>
+									<span>Max</span>
 								</div>
 							</section>
 
