@@ -9,10 +9,11 @@ import {
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { RotorCanvas, type BivectorView } from "./components/RotorCanvas";
+import { ShapePlacementCanvas } from "./components/ShapePlacementCanvas";
 import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
-import { createShapeStroke, type ShapeKind } from "./math/shapes";
+import type { ShapeKind } from "./math/shapes";
 import type { Stroke } from "./types/geometry";
 
 const PEN_COLORS = [
@@ -26,17 +27,14 @@ const PEN_COLORS = [
 	"#eb5757",
 ];
 
-const SHAPE_TOOLS: {
-	kind: ShapeKind;
-	label: string;
-}[] = [
-	{ kind: "line", label: "Line" },
-	{ kind: "circle", label: "Circle" },
-	{ kind: "rectangle", label: "Rect" },
-	{ kind: "triangle", label: "Tri" },
-	{ kind: "star", label: "Star" },
-	{ kind: "spiral", label: "Spiral" },
-	{ kind: "sine", label: "Sine" },
+const SHAPE_TOOLS: ShapeKind[] = [
+	"line",
+	"circle",
+	"rectangle",
+	"triangle",
+	"star",
+	"spiral",
+	"sine",
 ];
 
 const DEFAULT_PEN_COLOR = PEN_COLORS[0];
@@ -60,15 +58,12 @@ type AppMode = "draw" | "animate";
 
 type DrawingHistory = {
 	past: Stroke[][];
+	present: Stroke[];
 	future: Stroke[][];
 };
 
 function clampNumber(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
-}
-
-function areStrokeArraysSame(a: Stroke[], b: Stroke[]) {
-	return a === b;
 }
 
 function isBivectorView(value: string | null): value is BivectorView {
@@ -117,6 +112,119 @@ function readStoredSoundEnabled() {
 	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
 }
 
+function ShapeIcon({ kind }: { kind: ShapeKind }) {
+	if (kind === "line") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M6 23L26 9"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+					strokeLinecap="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "circle") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<circle
+					cx="16"
+					cy="16"
+					r="9"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "rectangle") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<rect
+					x="7"
+					y="9"
+					width="18"
+					height="14"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "triangle") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M16 6L26 24H6L16 6Z"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "star") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M16 5L19 12L26.5 12.5L20.8 17.5L22.6 25L16 21L9.4 25L11.2 17.5L5.5 12.5L13 12L16 5Z"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.1"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "spiral") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M17 16C17 18 14 18 14 15.5C14 12.5 18.5 11.8 20.8 14.2C24 17.5 21.8 23.5 16.2 24.2C9.6 25 5.2 18.4 8.5 12.4C11.6 6.9 19.6 5.8 24.8 10"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.2"
+					strokeLinecap="round"
+				/>
+			</svg>
+		);
+	}
+
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<path
+				d="M4 16C7 8 11 8 16 16C21 24 25 24 28 16"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.4"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
+
+function getShapeLabel(kind: ShapeKind) {
+	if (kind === "line") return "Line";
+	if (kind === "circle") return "Circle";
+	if (kind === "rectangle") return "Rectangle";
+	if (kind === "triangle") return "Triangle";
+	if (kind === "star") return "Star";
+	if (kind === "spiral") return "Spiral";
+
+	return "Sine wave";
+}
+
 function App() {
 	const canvasStageRef = useRef<HTMLElement | null>(null);
 	const soundEngineRef = useRef<DrawingSoundEngine | null>(null);
@@ -124,9 +232,9 @@ function App() {
 	const imageInputRef = useRef<HTMLInputElement | null>(null);
 
 	const [clearSignal, setClearSignal] = useState(0);
-	const [strokes, setStrokes] = useState<Stroke[]>([]);
-	const [history, setHistory] = useState<DrawingHistory>({
+	const [drawingHistory, setDrawingHistory] = useState<DrawingHistory>({
 		past: [],
+		present: [],
 		future: [],
 	});
 	const [mode, setMode] = useState<AppMode>("draw");
@@ -141,10 +249,12 @@ function App() {
 	);
 	const [isTracingImage, setIsTracingImage] = useState(false);
 	const [imageTraceError, setImageTraceError] = useState<string | null>(null);
+	const [selectedShape, setSelectedShape] = useState<ShapeKind | null>(null);
 
 	const [penColor, setPenColor] = useState(readStoredPenColor);
 	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
 
+	const strokes = drawingHistory.present;
 	const resampledPointCount = 256;
 	const visibleTermCount = resampledPointCount;
 
@@ -197,9 +307,9 @@ function App() {
 	);
 
 	const isAnimationMode = mode === "animate";
-	const isCanvasInteractive = mode === "draw";
-	const canUndo = history.past.length > 0;
-	const canRedo = history.future.length > 0;
+	const isCanvasInteractive = mode === "draw" && selectedShape === null;
+	const canUndo = drawingHistory.past.length > 0;
+	const canRedo = drawingHistory.future.length > 0;
 
 	function getSoundEngine() {
 		if (!soundEngineRef.current) {
@@ -230,20 +340,19 @@ function App() {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
 
-		setStrokes(currentStrokes => {
+		setDrawingHistory(currentHistory => {
 			const nextStrokes =
-				typeof update === "function" ? update(currentStrokes) : update;
+				typeof update === "function"
+					? update(currentHistory.present)
+					: update;
 
-			if (areStrokeArraysSame(currentStrokes, nextStrokes)) {
-				return currentStrokes;
-			}
+			if (nextStrokes === currentHistory.present) return currentHistory;
 
-			setHistory(currentHistory => ({
-				past: [...currentHistory.past, currentStrokes],
+			return {
+				past: [...currentHistory.past, currentHistory.present],
+				present: nextStrokes,
 				future: [],
-			}));
-
-			return nextStrokes;
+			};
 		});
 	}
 
@@ -253,21 +362,16 @@ function App() {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
 
-		setHistory(currentHistory => {
+		setDrawingHistory(currentHistory => {
 			const previous = currentHistory.past.at(-1);
 
 			if (!previous) return currentHistory;
 
-			setStrokes(currentStrokes => {
-				setHistory(latestHistory => ({
-					past: latestHistory.past.slice(0, -1),
-					future: [currentStrokes, ...latestHistory.future],
-				}));
-
-				return previous;
-			});
-
-			return currentHistory;
+			return {
+				past: currentHistory.past.slice(0, -1),
+				present: previous,
+				future: [currentHistory.present, ...currentHistory.future],
+			};
 		});
 	}
 
@@ -277,42 +381,38 @@ function App() {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
 
-		setHistory(currentHistory => {
+		setDrawingHistory(currentHistory => {
 			const next = currentHistory.future[0];
 
 			if (!next) return currentHistory;
 
-			setStrokes(currentStrokes => {
-				setHistory(latestHistory => ({
-					past: [...latestHistory.past, currentStrokes],
-					future: latestHistory.future.slice(1),
-				}));
-
-				return next;
-			});
-
-			return currentHistory;
+			return {
+				past: [...currentHistory.past, currentHistory.present],
+				present: next,
+				future: currentHistory.future.slice(1),
+			};
 		});
 	}
 
 	function clearEverything() {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
+		setSelectedShape(null);
 		setClearSignal(value => value + 1);
 
-		setStrokes(currentStrokes => {
-			if (currentStrokes.length === 0) return currentStrokes;
+		setDrawingHistory(currentHistory => {
+			if (currentHistory.present.length === 0) return currentHistory;
 
-			setHistory(currentHistory => ({
-				past: [...currentHistory.past, currentStrokes],
+			return {
+				past: [...currentHistory.past, currentHistory.present],
+				present: [],
 				future: [],
-			}));
-
-			return [];
+			};
 		});
 	}
 
 	function enterDrawMode() {
+		setSelectedShape(null);
 		resetAnimationSideEffects();
 	}
 
@@ -335,6 +435,7 @@ function App() {
 			}
 		}
 
+		setSelectedShape(null);
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
 	}
@@ -357,35 +458,8 @@ function App() {
 		}
 	}
 
-	function addShape(kind: ShapeKind) {
-		const stage = canvasStageRef.current;
-		if (!stage) return;
-
-		const rect = stage.getBoundingClientRect();
-		const size = Math.min(rect.width, rect.height) * 0.34;
-		const shapeWidth =
-			kind === "line" || kind === "sine" ? size * 1.5 : size;
-		const shapeHeight =
-			kind === "line" ? size * 0.25 : kind === "sine" ? size * 0.5 : size;
-
-		const shapeStroke = createShapeStroke({
-			kind,
-			bounds: {
-				center: {
-					x: rect.width / 2,
-					y: rect.height / 2,
-				},
-				width: shapeWidth,
-				height: shapeHeight,
-			},
-			style: {
-				color: penColor,
-				width: penWidth,
-			},
-			rotation: 0,
-		});
-
-		commitStrokes(currentStrokes => [...currentStrokes, shapeStroke]);
+	function commitShape(stroke: Stroke) {
+		commitStrokes(currentStrokes => [...currentStrokes, stroke]);
 	}
 
 	async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -399,6 +473,7 @@ function App() {
 
 		setIsTracingImage(true);
 		setImageTraceError(null);
+		setSelectedShape(null);
 		resetAnimationSideEffects();
 
 		try {
@@ -564,14 +639,15 @@ function App() {
 
 			if (isTyping) return;
 
+			const key = event.key.toLowerCase();
 			const isUndo =
 				(event.metaKey || event.ctrlKey) &&
 				!event.shiftKey &&
-				event.key.toLowerCase() === "z";
+				key === "z";
 			const isRedo =
 				(event.metaKey || event.ctrlKey) &&
-				((event.shiftKey && event.key.toLowerCase() === "z") ||
-					event.key.toLowerCase() === "y");
+				((event.shiftKey && key === "z") || key === "y");
+			const isEscape = key === "escape";
 
 			if (isUndo) {
 				event.preventDefault();
@@ -582,13 +658,19 @@ function App() {
 			if (isRedo) {
 				event.preventDefault();
 				redo();
+				return;
+			}
+
+			if (isEscape && selectedShape) {
+				event.preventDefault();
+				setSelectedShape(null);
 			}
 		}
 
 		window.addEventListener("keydown", handleKeyDown);
 
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [canUndo, canRedo]);
+	}, [canUndo, canRedo, selectedShape]);
 
 	useEffect(() => {
 		stopSoundFrame();
@@ -679,6 +761,17 @@ function App() {
 						/>
 					</div>
 
+					<ShapePlacementCanvas
+						selectedShape={
+							mode === "draw" && selectedShape
+								? selectedShape
+								: null
+						}
+						color={penColor}
+						width={penWidth}
+						onCommitShape={commitShape}
+					/>
+
 					<RotorCanvas
 						strokes={animatedStrokes}
 						isActive={isAnimationMode}
@@ -695,6 +788,14 @@ function App() {
 						<span>{totalResampledPoints} sampled</span>
 						<span>·</span>
 						<span>{totalFourierTerms} terms</span>
+						{selectedShape && mode === "draw" && (
+							<>
+								<span>·</span>
+								<span className="text-zinc-100/70">
+									{getShapeLabel(selectedShape)} tool
+								</span>
+							</>
+						)}
 						{isAnimationMode && (
 							<>
 								<span className="hidden sm:inline">·</span>
@@ -704,6 +805,13 @@ function App() {
 							</>
 						)}
 					</div>
+
+					{selectedShape && mode === "draw" && (
+						<div className="pointer-events-none absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur">
+							Press to anchor. Drag to scale and rotate. Release
+							to commit.
+						</div>
+					)}
 
 					{isAnimationMode && !isAnimationPlaying && (
 						<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -758,7 +866,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-16 z-20 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
+							"absolute right-3 top-16 z-30 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
 							isDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -789,33 +897,59 @@ function App() {
 								</div>
 
 								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Supports drawn strokes, image imports,
-									shapes, and clear actions. Shortcuts:
-									Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
+									Shortcuts: Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
 								</p>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Shapes
-								</p>
+								<div className="mb-3 flex items-center justify-between gap-3">
+									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Shapes
+									</p>
 
-								<div className="grid grid-cols-2 gap-2">
-									{SHAPE_TOOLS.map(shape => (
+									{selectedShape && (
 										<button
-											key={shape.kind}
-											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
-											onClick={() => addShape(shape.kind)}
+											className="text-xs font-semibold text-zinc-300 transition hover:text-zinc-50"
+											onClick={() =>
+												setSelectedShape(null)
+											}
 										>
-											{shape.label}
+											Freehand
+										</button>
+									)}
+								</div>
+
+								<div className="grid grid-cols-4 gap-2">
+									{SHAPE_TOOLS.map(kind => (
+										<button
+											key={kind}
+											className={[
+												"flex aspect-square items-center justify-center rounded-xl border transition",
+												selectedShape === kind
+													? "border-zinc-50 bg-zinc-50 text-zinc-950"
+													: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+											].join(" ")}
+											onClick={() => {
+												setMode("draw");
+												setIsAnimationPlaying(false);
+												setSelectedShape(current =>
+													current === kind
+														? null
+														: kind,
+												);
+											}}
+											aria-label={`Select ${getShapeLabel(kind)} tool`}
+											title={getShapeLabel(kind)}
+										>
+											<ShapeIcon kind={kind} />
 										</button>
 									))}
 								</div>
 
 								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Shapes are inserted as normal strokes, so
-									they use the same Fourier rotor pipeline as
-									freehand drawing and traced images.
+									Select a shape, then press and drag on the
+									canvas to scale and rotate it. Release to
+									finalize it as a normal stroke.
 								</p>
 							</section>
 
@@ -1040,7 +1174,7 @@ function App() {
 					<div className="flex items-center justify-center gap-3 overflow-x-auto">
 						<button
 							className={
-								mode === "draw"
+								mode === "draw" && selectedShape === null
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}

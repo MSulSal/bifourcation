@@ -73,26 +73,28 @@ function createRectanglePoints({
 	const top = center.y - height / 2;
 	const bottom = center.y + height / 2;
 
-	const corners: Point[] = [
-		{ x: left, y: top },
-		{ x: right, y: top },
-		{ x: right, y: bottom },
-		{ x: left, y: bottom },
-		{ x: left, y: top },
-	];
-
-	return interpolatePolyline(corners, DEFAULT_POINT_COUNT);
+	return interpolatePolyline(
+		[
+			{ x: left, y: top },
+			{ x: right, y: top },
+			{ x: right, y: bottom },
+			{ x: left, y: bottom },
+			{ x: left, y: top },
+		],
+		DEFAULT_POINT_COUNT,
+	);
 }
 
 function createTrianglePoints({ center, width, height }: ShapeBounds): Point[] {
-	const points: Point[] = [
-		{ x: center.x, y: center.y - height / 2 },
-		{ x: center.x + width / 2, y: center.y + height / 2 },
-		{ x: center.x - width / 2, y: center.y + height / 2 },
-		{ x: center.x, y: center.y - height / 2 },
-	];
-
-	return interpolatePolyline(points, DEFAULT_POINT_COUNT);
+	return interpolatePolyline(
+		[
+			{ x: center.x, y: center.y - height / 2 },
+			{ x: center.x + width / 2, y: center.y + height / 2 },
+			{ x: center.x - width / 2, y: center.y + height / 2 },
+			{ x: center.x, y: center.y - height / 2 },
+		],
+		DEFAULT_POINT_COUNT,
+	);
 }
 
 function createStarPoints({ center, width, height }: ShapeBounds): Point[] {
@@ -141,10 +143,11 @@ function createSinePoints({ center, width, height }: ShapeBounds): Point[] {
 
 	for (let index = 0; index < DEFAULT_POINT_COUNT; index += 1) {
 		const t = index / (DEFAULT_POINT_COUNT - 1);
-		const x = left + t * width;
-		const y = center.y + Math.sin(t * Math.PI * 2 * cycles) * (height / 2);
 
-		points.push({ x, y });
+		points.push({
+			x: left + t * width,
+			y: center.y + Math.sin(t * Math.PI * 2 * cycles) * (height / 2),
+		});
 	}
 
 	return points;
@@ -227,8 +230,8 @@ export function createShapeStroke({
 }): Stroke {
 	const normalizedBounds = {
 		center: bounds.center,
-		width: clamp(bounds.width, 24, 1200),
-		height: clamp(bounds.height, 24, 1200),
+		width: clamp(bounds.width, 18, 1600),
+		height: clamp(bounds.height, 18, 1600),
 	};
 
 	const points =
