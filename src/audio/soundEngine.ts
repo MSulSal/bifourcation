@@ -57,6 +57,7 @@ type StrokeSoundState = {
 	activeNotes: ActiveNote[];
 	lastSeenFrame: number;
 	needsInitialNote: boolean;
+	lastTriggerTime: number;
 };
 
 type WebAudioWindow = Window &
@@ -64,12 +65,13 @@ type WebAudioWindow = Window &
 		webkitAudioContext?: typeof AudioContext;
 	};
 
-const MASTER_GAIN = 0.58;
+const MASTER_GAIN = 0.28;
 const TWO_PI = Math.PI * 2;
 const MIDI_A0 = 21;
 const MIDI_C8 = 108;
 const SIZE_BUCKET_COUNT = 11;
-const MAX_ACTIVE_NOTES_PER_STROKE = 12;
+const MAX_ACTIVE_NOTES_PER_STROKE = 8;
+const MIN_NOTE_INTERVAL_SECONDS = 0.045;
 const SOLFEGE_INTERVALS = [0, 2, 4, 5, 7, 9, 11, 12];
 
 function clamp(value: number, min: number, max: number) {
@@ -262,42 +264,61 @@ function getDetail(stroke: RotorSoundStrokeFrame) {
 }
 
 function getInstrumentSettings(view: BivectorSoundView, detail: number) {
+	/*
+		These are intentionally gentle. The pitch logic is already discrete
+		keyboard-note logic; the view only changes envelope/filter character.
+		Lower velocity, softer attacks, shorter decays, and lower filter cutoffs
+		keep sector crossings from stacking into brittle clipping.
+	*/
 	if (view === "blade") {
 		return {
 			oscillatorType: "triangle" as OscillatorType,
-			attackSeconds: 0.008,
-			decaySeconds: 1.35,
-			filterFrequency: 4400 - detail * 850,
-			filterQ: 0.72,
-			velocity: 0.4,
+			attackSeconds: 0.018,
+			decaySeconds: 0.95,
+			filterFrequency: 3200 - detail * 650,
+			filterQ: 0.55,
+			velocity: 0.22,
 		};
 	}
 
 	if (view === "companion") {
 		return {
 			oscillatorType: "triangle" as OscillatorType,
-			attackSeconds: 0.01,
-			decaySeconds: 1.75,
-			filterFrequency: 3150 - detail * 650,
-			filterQ: 0.9,
-			velocity: 0.52,
+			attackSeconds: 0.014,
+			decaySeconds: 1.05,
+			filterFrequency: 2500 - detail * 520,
+			filterQ: 0.72,
+			velocity: 0.26,
 		};
 	}
 
 	return {
 		oscillatorType: "sine" as OscillatorType,
-		attackSeconds: 0.022,
-		decaySeconds: 3.2,
-		filterFrequency: 1450 + detail * 420,
-		filterQ: 1.05,
-		velocity: 0.72,
+		attackSeconds: 0.034,
+		decaySeconds: 1.85,
+		filterFrequency: 1050 + detail * 320,
+		filterQ: 0.82,
+		velocity: 0.32,
 	};
+}
+
+function createSoftLimiterCurve(samples = 2048) {
+	const curve = new Float32Array(samples);
+
+	for (let index = 0; index < samples; index += 1) {
+		const x = (index / (samples - 1)) * 2 - 1;
+		curve[index] = Math.tanh(x * 1.65) / Math.tanh(1.65);
+	}
+
+	return curve;
 }
 
 export class DrawingSoundEngine {
 	private context: AudioContext | null = null;
 	private masterGain: GainNode | null = null;
+	private masterFilter: BiquadFilterNode | null = null;
 	private compressor: DynamicsCompressorNode | null = null;
+	private limiter: WaveShaperNode | null = null;
 	private states = new Map<string, StrokeSoundState>();
 	private frameCounter = 0;
 	private isRunning = false;
@@ -422,6 +443,7 @@ export class DrawingSoundEngine {
 				activeNotes: [],
 				lastSeenFrame: this.frameCounter,
 				needsInitialNote: false,
+				lastTriggerTime: Number.NEGATIVE_INFINITY,
 			};
 
 			this.states.set(stroke.id, nextState);
@@ -452,22 +474,35 @@ export class DrawingSoundEngine {
 
 		const context = new AudioContextConstructor();
 		const masterGain = context.createGain();
+		const masterFilter = context.createBiquadFilter();
 		const compressor = context.createDynamicsCompressor();
+		const limiter = context.createWaveShaper();
 
 		masterGain.gain.value = 0.0001;
 
-		compressor.threshold.value = -20;
-		compressor.knee.value = 22;
-		compressor.ratio.value = 2.0;
-		compressor.attack.value = 0.02;
-		compressor.release.value = 0.28;
+		masterFilter.type = "lowpass";
+		masterFilter.frequency.value = 6800;
+		masterFilter.Q.value = 0.45;
 
-		masterGain.connect(compressor);
-		compressor.connect(context.destination);
+		compressor.threshold.value = -26;
+		compressor.knee.value = 18;
+		compressor.ratio.value = 5.0;
+		compressor.attack.value = 0.006;
+		compressor.release.value = 0.18;
+
+		limiter.curve = createSoftLimiterCurve();
+		limiter.oversample = "4x";
+
+		masterGain.connect(masterFilter);
+		masterFilter.connect(compressor);
+		compressor.connect(limiter);
+		limiter.connect(context.destination);
 
 		this.context = context;
 		this.masterGain = masterGain;
+		this.masterFilter = masterFilter;
 		this.compressor = compressor;
+		this.limiter = limiter;
 
 		return context;
 	}
@@ -480,9 +515,16 @@ export class DrawingSoundEngine {
 
 	private stopNote(note: ActiveNote, time: number) {
 		try {
-			note.gain.gain.cancelScheduledValues(time);
-			note.gain.gain.setTargetAtTime(0.0001, time, 0.018);
-			note.source.stop(time + 0.08);
+			const gain = note.gain.gain;
+
+			if (typeof gain.cancelAndHoldAtTime === "function") {
+				gain.cancelAndHoldAtTime(time);
+			} else {
+				gain.cancelScheduledValues(time);
+			}
+
+			gain.setTargetAtTime(0.0001, time, 0.035);
+			note.source.stop(time + 0.16);
 		} catch {
 			// The source may already have stopped.
 		}
@@ -500,6 +542,9 @@ export class DrawingSoundEngine {
 		const context = this.context;
 		const masterGain = this.masterGain;
 		if (!context || !masterGain) return;
+
+		if (time - state.lastTriggerTime < MIN_NOTE_INTERVAL_SECONDS) return;
+		state.lastTriggerTime = time;
 
 		this.cleanupFinishedNotes(state, time);
 
@@ -536,10 +581,9 @@ export class DrawingSoundEngine {
 			Math.max(0.0001, velocity),
 			attackEnd,
 		);
-		noteGain.gain.setTargetAtTime(
+		noteGain.gain.exponentialRampToValueAtTime(
 			0.0001,
-			attackEnd,
-			settings.decaySeconds / 4,
+			Math.max(attackEnd + 0.05, decayEnd),
 		);
 
 		oscillator.connect(filter);
