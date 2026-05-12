@@ -87,12 +87,15 @@ function transformLocalPoint(
 	shape: ShapeObject,
 	center: Point,
 ): Point {
-	let x = shape.flipX ? -local.x : local.x;
-	const y = shape.flipY ? -local.y : local.y;
+	let x = local.x;
+	let y = local.y;
 
 	if (shape.kind === "parallelogram") {
 		x += y * shape.skewX;
 	}
+
+	if (shape.flipX) x = -x;
+	if (shape.flipY) y = -y;
 
 	const world = {
 		x: center.x + x,

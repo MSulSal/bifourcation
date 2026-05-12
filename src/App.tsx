@@ -44,18 +44,50 @@ import type {
 	Stroke,
 } from "./types/geometry";
 
-const PEN_COLORS = [
-	"#e84d3d",
-	"#2f80ed",
-	"#27ae60",
-	"#f2c94c",
-	"#9b51e0",
-	"#f2994a",
-	"#56ccf2",
-	"#eb5757",
+const MS_PAINT_COLORS = [
+	"#000000",
+	"#7F7F7F",
+	"#880015",
+	"#ED1C24",
+	"#FF7F27",
+	"#FFF200",
+	"#22B14C",
+	"#00A2E8",
+	"#3F48CC",
+	"#A349A4",
+	"#FFFFFF",
+	"#C3C3C3",
+	"#B97A57",
+	"#FFAEC9",
+	"#FFC90E",
+	"#EFE4B0",
+	"#B5E61D",
+	"#99D9EA",
+	"#7092BE",
+	"#C8BFE7",
+	"#1C1C1C",
+	"#4D4D4D",
+	"#5F2B17",
+	"#C00000",
+	"#C55A11",
+	"#BFB000",
+	"#157A2C",
+	"#0070C0",
+	"#273A96",
+	"#7030A0",
+	"#F2F2F2",
+	"#A6A6A6",
+	"#D7A17A",
+	"#FF6B6B",
+	"#F4B183",
+	"#FFF7A8",
+	"#92D050",
+	"#B7E1CD",
+	"#8EA9DB",
+	"#D9B3E6",
 ];
 
-const DEFAULT_PEN_COLOR = PEN_COLORS[0];
+const DEFAULT_PEN_COLOR = "#E84D3D";
 const DEFAULT_PEN_WIDTH = 4;
 const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
 const DEFAULT_ANIMATION_TRACE_MODE: AnimationTraceMode = "sequential";
@@ -90,8 +122,60 @@ type ContextMenuState = {
 	objectId: string | null;
 };
 
+type RgbColor = {
+	r: number;
+	g: number;
+	b: number;
+};
+
 function clampNumber(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
+}
+
+function normalizeHexColor(value: string) {
+	const trimmed = value.trim();
+
+	if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
+		return trimmed.toUpperCase();
+	}
+
+	if (/^[0-9a-fA-F]{6}$/.test(trimmed)) {
+		return `#${trimmed.toUpperCase()}`;
+	}
+
+	if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+		const [, r, g, b] = trimmed;
+
+		return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+	}
+
+	if (/^[0-9a-fA-F]{3}$/.test(trimmed)) {
+		const [r, g, b] = trimmed;
+
+		return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+	}
+
+	return null;
+}
+
+function hexToRgb(hex: string): RgbColor {
+	const normalized = normalizeHexColor(hex) ?? DEFAULT_PEN_COLOR;
+
+	return {
+		r: Number.parseInt(normalized.slice(1, 3), 16),
+		g: Number.parseInt(normalized.slice(3, 5), 16),
+		b: Number.parseInt(normalized.slice(5, 7), 16),
+	};
+}
+
+function rgbToHex({ r, g, b }: RgbColor) {
+	const toHex = (value: number) =>
+		Math.round(clampNumber(value, 0, 255))
+			.toString(16)
+			.padStart(2, "0")
+			.toUpperCase();
+
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
 function isBivectorView(value: string | null): value is BivectorView {
@@ -122,10 +206,9 @@ function writeStoredValue(key: string, value: string) {
 
 function readStoredPenColor() {
 	const storedColor = readStoredValue(STORAGE_KEYS.penColor);
+	const normalized = storedColor ? normalizeHexColor(storedColor) : null;
 
-	return storedColor && PEN_COLORS.includes(storedColor)
-		? storedColor
-		: DEFAULT_PEN_COLOR;
+	return normalized ?? DEFAULT_PEN_COLOR;
 }
 
 function readStoredPenWidth() {
@@ -403,6 +486,7 @@ function App() {
 	const [toolMode, setToolMode] = useState<ToolMode>("draw");
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+	const [isColorDrawerOpen, setIsColorDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
 	const [bivectorView, setBivectorView] = useState<BivectorView>(
 		readStoredBivectorView,
@@ -426,8 +510,11 @@ function App() {
 
 	const [penColor, setPenColor] = useState(readStoredPenColor);
 	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
+	const [colorHexDraft, setColorHexDraft] = useState(readStoredPenColor);
 
 	const drawingObjects = drawingHistory.present;
+	const currentRgb = useMemo(() => hexToRgb(penColor), [penColor]);
+
 	const strokes = useMemo(
 		() =>
 			drawingObjects.flatMap(object => {
@@ -503,6 +590,23 @@ function App() {
 		mode === "draw" && toolMode === "draw" && selectedShape === null;
 	const canUndo = drawingHistory.past.length > 0;
 	const canRedo = drawingHistory.future.length > 0;
+
+	function changePenColor(nextColor: string) {
+		const normalized = normalizeHexColor(nextColor);
+
+		if (!normalized) return;
+
+		setPenColor(normalized);
+	}
+
+	function changeRgbComponent(component: keyof RgbColor, value: number) {
+		const nextRgb = {
+			...currentRgb,
+			[component]: clampNumber(Math.round(value), 0, 255),
+		};
+
+		changePenColor(rgbToHex(nextRgb));
+	}
 
 	function getSoundEngine() {
 		if (!soundEngineRef.current) {
@@ -618,7 +722,6 @@ function App() {
 	function clearEverything() {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
-		setSelectedShape(null);
 		setSelectedObjectId(null);
 		setContextMenu(null);
 		setClearSignal(value => value + 1);
@@ -636,7 +739,6 @@ function App() {
 
 	function enterDrawMode() {
 		setToolMode("draw");
-		setSelectedShape(null);
 		setSelectedObjectId(null);
 		setContextMenu(null);
 		resetAnimationSideEffects();
@@ -645,7 +747,6 @@ function App() {
 	function enterEditMode() {
 		setMode("draw");
 		setToolMode("edit");
-		setSelectedShape(null);
 		setContextMenu(null);
 		pauseAnimationClock();
 	}
@@ -653,7 +754,6 @@ function App() {
 	function enterFillMode() {
 		setMode("draw");
 		setToolMode("fill");
-		setSelectedShape(null);
 		setSelectedObjectId(null);
 		setContextMenu(null);
 		pauseAnimationClock();
@@ -678,7 +778,6 @@ function App() {
 			}
 		}
 
-		setSelectedShape(null);
 		setSelectedObjectId(null);
 		setContextMenu(null);
 		setMode("animate");
@@ -733,7 +832,6 @@ function App() {
 			},
 		]);
 
-		setSelectedShape(null);
 		setSelectedObjectId(shape.id);
 		setMode("draw");
 		setToolMode("edit");
@@ -853,7 +951,6 @@ function App() {
 
 		setIsTracingImage(true);
 		setImageTraceError(null);
-		setSelectedShape(null);
 		setSelectedObjectId(null);
 		setContextMenu(null);
 		resetAnimationSideEffects();
@@ -1001,6 +1098,7 @@ function App() {
 
 	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.penColor, penColor);
+		setColorHexDraft(penColor);
 	}, [penColor]);
 
 	useEffect(() => {
@@ -1069,6 +1167,7 @@ function App() {
 				setSelectedObjectId(null);
 				setToolMode("draw");
 				setContextMenu(null);
+				setIsColorDrawerOpen(false);
 			}
 		}
 
@@ -1309,7 +1408,10 @@ function App() {
 
 					<button
 						className="absolute right-3 top-3 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
-						onClick={() => setIsDrawerOpen(value => !value)}
+						onClick={() => {
+							setIsDrawerOpen(value => !value);
+							setIsColorDrawerOpen(false);
+						}}
 						aria-label={
 							isDrawerOpen
 								? "Close settings drawer"
@@ -1322,6 +1424,25 @@ function App() {
 								"transition-transform duration-200",
 								isDrawerOpen ? "rotate-90" : "rotate-0",
 							].join(" ")}
+						/>
+					</button>
+
+					<button
+						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						onClick={() => {
+							setIsColorDrawerOpen(value => !value);
+							setIsDrawerOpen(false);
+						}}
+						aria-label={
+							isColorDrawerOpen
+								? "Close color drawer"
+								: "Open color drawer"
+						}
+						title="Color"
+					>
+						<span
+							className="h-6 w-6 rounded-full border-2 border-zinc-100 shadow-inner"
+							style={{ backgroundColor: penColor }}
 						/>
 					</button>
 
@@ -1362,7 +1483,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
+							"absolute right-3 top-28 z-40 max-h-[calc(100%-8rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
 							isDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -1437,8 +1558,7 @@ function App() {
 									<button
 										className={[
 											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
-											toolMode === "draw" &&
-											!selectedShape
+											toolMode === "draw"
 												? "border-zinc-50 bg-zinc-50 text-zinc-950"
 												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
 										].join(" ")}
@@ -1528,18 +1648,6 @@ function App() {
 								</div>
 							</section>
 
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Bucket fill
-								</p>
-
-								<p className="text-xs leading-5 text-zinc-500">
-									Select the bucket tool, choose a color, then
-									click the canvas. Open loops can leak to the
-									canvas edge.
-								</p>
-							</section>
-
 							{selectedShapeObject && (
 								<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 									<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
@@ -1584,30 +1692,6 @@ function App() {
 									</div>
 								</section>
 							)}
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Color
-								</p>
-
-								<div className="grid grid-cols-4 gap-2">
-									{PEN_COLORS.map(color => (
-										<button
-											key={color}
-											className="aspect-square rounded-xl border-2 transition hover:scale-105"
-											style={{
-												backgroundColor: color,
-												borderColor:
-													color === penColor
-														? "#f4f4f5"
-														: "transparent",
-											}}
-											onClick={() => setPenColor(color)}
-											aria-label={`Select pen color ${color}`}
-										/>
-									))}
-								</div>
-							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 								<div className="mb-3 flex items-center justify-between">
@@ -1707,6 +1791,144 @@ function App() {
 						</div>
 					</div>
 
+					<div
+						className={[
+							"absolute right-3 top-28 z-40 max-h-[calc(100%-8rem)] w-[calc(100vw-1.5rem)] max-w-80 overflow-y-auto transition-all duration-200 sm:w-80",
+							isColorDrawerOpen
+								? "translate-x-0 opacity-100"
+								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
+						].join(" ")}
+					>
+						<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/80 p-3 shadow-lg backdrop-blur">
+							<div className="mb-3 flex items-center justify-between">
+								<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Color
+								</p>
+
+								<span
+									className="h-8 w-8 rounded-full border-2 border-zinc-100"
+									style={{ backgroundColor: penColor }}
+								/>
+							</div>
+
+							<div className="grid grid-cols-10 gap-1.5">
+								{MS_PAINT_COLORS.map(color => (
+									<button
+										key={color}
+										className="aspect-square rounded-md border-2 transition hover:scale-105"
+										style={{
+											backgroundColor: color,
+											borderColor:
+												color === penColor
+													? "#f4f4f5"
+													: "rgba(63, 63, 70, 0.7)",
+										}}
+										onClick={() => changePenColor(color)}
+										aria-label={`Select color ${color}`}
+										title={color}
+									/>
+								))}
+							</div>
+
+							<div className="mt-4 grid grid-cols-[auto_1fr] items-center gap-3">
+								<label className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Spectrum
+								</label>
+
+								<input
+									className="h-10 w-full cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 p-1"
+									type="color"
+									value={penColor}
+									onChange={event =>
+										changePenColor(event.target.value)
+									}
+									aria-label="Choose color from spectrum"
+								/>
+
+								<label className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Hex
+								</label>
+
+								<input
+									className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+									value={colorHexDraft}
+									onChange={event => {
+										const nextValue = event.target.value;
+										setColorHexDraft(nextValue);
+
+										const normalized =
+											normalizeHexColor(nextValue);
+										if (normalized) {
+											changePenColor(normalized);
+										}
+									}}
+									onBlur={() => setColorHexDraft(penColor)}
+									placeholder="#E84D3D"
+									spellCheck={false}
+								/>
+							</div>
+
+							<div className="mt-3 grid grid-cols-3 gap-2">
+								<label className="block">
+									<span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										R
+									</span>
+									<input
+										className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										type="number"
+										min={0}
+										max={255}
+										value={currentRgb.r}
+										onChange={event =>
+											changeRgbComponent(
+												"r",
+												Number(event.target.value),
+											)
+										}
+									/>
+								</label>
+
+								<label className="block">
+									<span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										G
+									</span>
+									<input
+										className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										type="number"
+										min={0}
+										max={255}
+										value={currentRgb.g}
+										onChange={event =>
+											changeRgbComponent(
+												"g",
+												Number(event.target.value),
+											)
+										}
+									/>
+								</label>
+
+								<label className="block">
+									<span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										B
+									</span>
+									<input
+										className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										type="number"
+										min={0}
+										max={255}
+										value={currentRgb.b}
+										onChange={event =>
+											changeRgbComponent(
+												"b",
+												Number(event.target.value),
+											)
+										}
+									/>
+								</label>
+							</div>
+						</section>
+					</div>
+
 					<button
 						className={[
 							"absolute bottom-3 right-16 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border shadow-lg backdrop-blur transition disabled:cursor-not-allowed disabled:opacity-40",
@@ -1788,9 +2010,7 @@ function App() {
 					<div className="flex items-center justify-center gap-3 overflow-x-auto">
 						<button
 							className={
-								mode === "draw" &&
-								toolMode === "draw" &&
-								selectedShape === null
+								mode === "draw" && toolMode === "draw"
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
