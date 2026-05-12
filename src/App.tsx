@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Redo2, Settings, Undo2 } from "lucide-react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
+import { BucketFillCanvas } from "./components/BucketFillCanvas";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { ObjectTransformCanvas } from "./components/ObjectTransformCanvas";
 import {
@@ -26,12 +27,11 @@ import {
 	flipShapeHorizontal,
 	flipShapeVertical,
 	getShapeLabel,
-	setShapeFill,
 	SHAPE_TOOLS,
 } from "./math/shapes";
 import type {
+	BucketFillObject,
 	DrawingObject,
-	ShapeFill,
 	ShapeKind,
 	ShapeObject,
 	Stroke,
@@ -59,7 +59,6 @@ const STORAGE_KEYS = {
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
 	animationTraceMode: "bifourcation.animationTraceMode",
-	fillEnabled: "bifourcation.fillEnabled",
 	fillOpacity: "bifourcation.fillOpacity",
 } as const;
 
@@ -70,7 +69,7 @@ const INACTIVE_BUTTON_CLASS =
 	"shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
 
 type AppMode = "draw" | "animate";
-type ToolMode = "draw" | "edit";
+type ToolMode = "draw" | "edit" | "fill";
 
 type DrawingHistory = {
 	past: DrawingObject[][];
@@ -142,14 +141,10 @@ function readStoredSoundEnabled() {
 	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
 }
 
-function readStoredFillEnabled() {
-	return readStoredValue(STORAGE_KEYS.fillEnabled) === "true";
-}
-
 function readStoredFillOpacity() {
 	const storedOpacity = Number(readStoredValue(STORAGE_KEYS.fillOpacity));
 
-	if (!Number.isFinite(storedOpacity)) return 0.28;
+	if (!Number.isFinite(storedOpacity)) return 0.42;
 
 	return clampFillOpacity(storedOpacity);
 }
@@ -320,6 +315,32 @@ function TransformIcon() {
 	);
 }
 
+function BucketIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<path
+				d="M10 7L23 20L15 28L5 18L10 7Z"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.2"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M8 9L15 2L28 15L23 20"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M24 25C24 25 27 21 27 19C27 17.7 25.9 17 24 17C22.1 17 21 17.7 21 19C21 21 24 25 24 25Z"
+				fill="currentColor"
+			/>
+		</svg>
+	);
+}
+
 function App() {
 	const canvasStageRef = useRef<HTMLElement | null>(null);
 	const soundEngineRef = useRef<DrawingSoundEngine | null>(null);
@@ -352,7 +373,6 @@ function App() {
 	const [selectedObjectId, setSelectedObjectId] = useState<string | null>(
 		null,
 	);
-	const [isFillEnabled, setIsFillEnabled] = useState(readStoredFillEnabled);
 	const [fillOpacity, setFillOpacity] = useState(readStoredFillOpacity);
 
 	const [penColor, setPenColor] = useState(readStoredPenColor);
@@ -360,7 +380,12 @@ function App() {
 
 	const drawingObjects = drawingHistory.present;
 	const strokes = useMemo(
-		() => drawingObjects.map(drawingObjectToStroke),
+		() =>
+			drawingObjects.flatMap(object => {
+				const stroke = drawingObjectToStroke(object);
+
+				return stroke ? [stroke] : [];
+			}),
 		[drawingObjects],
 	);
 
@@ -370,13 +395,6 @@ function App() {
 
 	const selectedShapeObject =
 		selectedObject?.type === "shape" ? selectedObject.shape : null;
-
-	const activeFill: ShapeFill | null = isFillEnabled
-		? {
-				color: penColor,
-				opacity: fillOpacity,
-			}
-		: null;
 
 	const resampledPointCount = 256;
 	const visibleTermCount = resampledPointCount;
@@ -431,6 +449,7 @@ function App() {
 
 	const isAnimationMode = mode === "animate";
 	const isEditMode = mode === "draw" && toolMode === "edit";
+	const isFillMode = mode === "draw" && toolMode === "fill";
 	const isCanvasInteractive =
 		mode === "draw" && toolMode === "draw" && selectedShape === null;
 	const canUndo = drawingHistory.past.length > 0;
@@ -577,6 +596,14 @@ function App() {
 		pauseAnimationClock();
 	}
 
+	function enterFillMode() {
+		setMode("draw");
+		setToolMode("fill");
+		setSelectedShape(null);
+		setSelectedObjectId(null);
+		pauseAnimationClock();
+	}
+
 	async function toggleAnimation() {
 		if (!hasAnimationData) return;
 
@@ -653,6 +680,17 @@ function App() {
 		setSelectedObjectId(shape.id);
 	}
 
+	function commitBucketFill(fill: BucketFillObject) {
+		commitObjects(currentObjects => [
+			...currentObjects,
+			{
+				type: "bucket-fill",
+				id: fill.id,
+				fill,
+			},
+		]);
+	}
+
 	function beginObjectEdit() {
 		if (!editSnapshotRef.current) {
 			editSnapshotRef.current = drawingHistory.present;
@@ -718,12 +756,6 @@ function App() {
 		);
 
 		setSelectedObjectId(null);
-	}
-
-	function applyCurrentFillToSelectedShape() {
-		if (!selectedShapeObject) return;
-
-		commitSelectedShapeUpdate(shape => setShapeFill(shape, activeFill));
 	}
 
 	async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -903,10 +935,6 @@ function App() {
 	}, [isSoundEnabled]);
 
 	useEffect(() => {
-		writeStoredValue(STORAGE_KEYS.fillEnabled, String(isFillEnabled));
-	}, [isFillEnabled]);
-
-	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.fillOpacity, String(fillOpacity));
 	}, [fillOpacity]);
 
@@ -946,6 +974,7 @@ function App() {
 				event.preventDefault();
 				setSelectedShape(null);
 				setSelectedObjectId(null);
+				setToolMode("draw");
 			}
 		}
 
@@ -1055,8 +1084,16 @@ function App() {
 						}
 						color={penColor}
 						width={penWidth}
-						fill={activeFill}
+						fill={null}
 						onCommitShape={commitShape}
+					/>
+
+					<BucketFillCanvas
+						enabled={isFillMode}
+						objects={drawingObjects}
+						color={penColor}
+						opacity={fillOpacity}
+						onCommitFill={commitBucketFill}
 					/>
 
 					<ObjectTransformCanvas
@@ -1108,6 +1145,15 @@ function App() {
 								</span>
 							</>
 						)}
+
+						{isFillMode && (
+							<>
+								<span>·</span>
+								<span className="text-zinc-100/70">
+									bucket fill
+								</span>
+							</>
+						)}
 					</div>
 
 					{selectedShape &&
@@ -1123,6 +1169,13 @@ function App() {
 						<div className="pointer-events-none absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur">
 							Select a shape. Drag to move. Use handles to scale
 							or rotate.
+						</div>
+					)}
+
+					{isFillMode && (
+						<div className="pointer-events-none absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur">
+							Click anywhere to flood fill until a drawn boundary
+							or canvas edge.
 						</div>
 					)}
 
@@ -1238,7 +1291,7 @@ function App() {
 									Tools
 								</p>
 
-								<div className="grid grid-cols-2 gap-2">
+								<div className="grid grid-cols-3 gap-2">
 									<button
 										className={[
 											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
@@ -1264,6 +1317,20 @@ function App() {
 										title="Edit shapes"
 									>
 										<TransformIcon />
+									</button>
+
+									<button
+										className={[
+											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
+											toolMode === "fill"
+												? "border-zinc-50 bg-zinc-50 text-zinc-950"
+												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+										].join(" ")}
+										onClick={enterFillMode}
+										aria-label="Bucket fill"
+										title="Bucket fill"
+									>
+										<BucketIcon />
 									</button>
 								</div>
 							</section>
@@ -1319,36 +1386,10 @@ function App() {
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Fill
+									Bucket fill
 								</p>
 
-								<div className="grid grid-cols-2 gap-2">
-									<button
-										className={[
-											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
-											!isFillEnabled
-												? "border-zinc-50 bg-zinc-50 text-zinc-950"
-												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-										].join(" ")}
-										onClick={() => setIsFillEnabled(false)}
-									>
-										None
-									</button>
-
-									<button
-										className={[
-											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
-											isFillEnabled
-												? "border-zinc-50 bg-zinc-50 text-zinc-950"
-												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-										].join(" ")}
-										onClick={() => setIsFillEnabled(true)}
-									>
-										Solid
-									</button>
-								</div>
-
-								<div className="mt-3 flex items-center justify-between">
+								<div className="flex items-center justify-between">
 									<span className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
 										Opacity
 									</span>
@@ -1371,13 +1412,11 @@ function App() {
 									}
 								/>
 
-								<button
-									className="mt-3 w-full rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-									onClick={applyCurrentFillToSelectedShape}
-									disabled={!selectedShapeObject}
-								>
-									Apply to selected
-								</button>
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Select the bucket tool, choose a color, then
+									click the canvas. Open loops can leak to the
+									canvas edge.
+								</p>
 							</section>
 
 							{selectedShapeObject && (
@@ -1416,22 +1455,7 @@ function App() {
 										</button>
 
 										<button
-											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
-											onClick={() =>
-												commitSelectedShapeUpdate(
-													shape =>
-														setShapeFill(
-															shape,
-															null,
-														),
-												)
-											}
-										>
-											No fill
-										</button>
-
-										<button
-											className="rounded-xl border border-red-900/70 px-3 py-3 text-sm font-semibold text-red-200 transition hover:bg-red-950/50"
+											className="col-span-2 rounded-xl border border-red-900/70 px-3 py-3 text-sm font-semibold text-red-200 transition hover:bg-red-950/50"
 											onClick={deleteSelectedObject}
 										>
 											Delete
@@ -1658,6 +1682,17 @@ function App() {
 							onClick={enterEditMode}
 						>
 							Edit
+						</button>
+
+						<button
+							className={
+								mode === "draw" && toolMode === "fill"
+									? ACTIVE_BUTTON_CLASS
+									: INACTIVE_BUTTON_CLASS
+							}
+							onClick={enterFillMode}
+						>
+							Fill
 						</button>
 
 						<button

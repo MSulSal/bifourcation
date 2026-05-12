@@ -3,7 +3,11 @@ import {
 	useRef,
 	type PointerEvent as ReactPointerEvent,
 } from "react";
-import { createId, renderDrawingObject } from "../math/shapes";
+import {
+	createId,
+	renderDrawingObject,
+	renderDrawingObjects,
+} from "../math/shapes";
 import type { DrawingObject, Point, Stroke } from "../types/geometry";
 
 type DrawingCanvasProps = {
@@ -64,9 +68,7 @@ export function DrawingCanvas({
 
 		ctx.clearRect(0, 0, rect.width, rect.height);
 
-		for (const object of objects) {
-			renderDrawingObject(ctx, object);
-		}
+		renderDrawingObjects(ctx, objects);
 
 		if (currentStroke && currentStroke.points.length >= 2) {
 			renderDrawingObject(ctx, {

@@ -1,4 +1,5 @@
 import type {
+	BucketFillObject,
 	DrawingObject,
 	Point,
 	Rect,
@@ -86,8 +87,6 @@ function transformLocalPoint(
 	shape: ShapeObject,
 	center: Point,
 ): Point {
-	// const bounds = normalizeRect(shape.bounds);
-
 	let x = shape.flipX ? -local.x : local.x;
 	const y = shape.flipY ? -local.y : local.y;
 
@@ -379,10 +378,11 @@ export function shapeObjectToStroke(shape: ShapeObject): Stroke {
 	};
 }
 
-export function drawingObjectToStroke(object: DrawingObject): Stroke {
+export function drawingObjectToStroke(object: DrawingObject): Stroke | null {
 	if (object.type === "freehand") return object.stroke;
+	if (object.type === "shape") return shapeObjectToStroke(object.shape);
 
-	return shapeObjectToStroke(object.shape);
+	return null;
 }
 
 export function getPointsBounds(points: Point[]): Rect {
@@ -411,19 +411,20 @@ export function getPointsBounds(points: Point[]): Rect {
 }
 
 export function getDrawingObjectBounds(object: DrawingObject): Rect {
-	return getPointsBounds(drawingObjectToStroke(object).points);
-}
+	if (object.type === "bucket-fill") {
+		return {
+			x: 0,
+			y: 0,
+			width: object.fill.canvasWidth,
+			height: object.fill.canvasHeight,
+		};
+	}
 
-export function isClosedShape(kind: ShapeKind) {
-	return (
-		kind === "ellipse" ||
-		kind === "rectangle" ||
-		kind === "parallelogram" ||
-		kind === "triangle-equilateral" ||
-		kind === "triangle-isosceles" ||
-		kind === "triangle-scalene" ||
-		kind === "star"
-	);
+	const stroke = drawingObjectToStroke(object);
+
+	return stroke
+		? getPointsBounds(stroke.points)
+		: { x: 0, y: 0, width: 0, height: 0 };
 }
 
 export function translateShape(shape: ShapeObject, dx: number, dy: number) {
@@ -493,49 +494,102 @@ export function getShapeLabel(kind: ShapeKind) {
 	return "Sine wave";
 }
 
+function renderStrokePath(
+	ctx: CanvasRenderingContext2D,
+	stroke: Stroke,
+	options: {
+		fill?: ShapeFill | null;
+		stroke?: boolean;
+	} = {},
+) {
+	if (stroke.points.length < 2) return;
+
+	const shouldStroke = options.stroke ?? true;
+
+	ctx.save();
+
+	ctx.beginPath();
+	ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+
+	for (const point of stroke.points.slice(1)) {
+		ctx.lineTo(point.x, point.y);
+	}
+
+	if (options.fill) {
+		ctx.globalAlpha = options.fill.opacity;
+		ctx.fillStyle = options.fill.color;
+		ctx.fill();
+		ctx.globalAlpha = 1;
+	}
+
+	if (shouldStroke) {
+		ctx.strokeStyle = stroke.color;
+		ctx.lineWidth = stroke.width;
+		ctx.lineCap = "round";
+		ctx.lineJoin = "round";
+		ctx.stroke();
+	}
+
+	ctx.restore();
+}
+
+function renderBucketFill(
+	ctx: CanvasRenderingContext2D,
+	fill: BucketFillObject,
+) {
+	if (fill.spans.length === 0) return;
+
+	ctx.save();
+	ctx.globalAlpha = fill.opacity;
+	ctx.fillStyle = fill.color;
+
+	for (const span of fill.spans) {
+		ctx.fillRect(span.x, span.y, span.width, 1);
+	}
+
+	ctx.restore();
+}
+
 export function renderDrawingObject(
 	ctx: CanvasRenderingContext2D,
 	object: DrawingObject,
 ) {
+	if (object.type === "bucket-fill") {
+		renderBucketFill(ctx, object.fill);
+		return;
+	}
+
 	if (object.type === "shape") {
 		const stroke = shapeObjectToStroke(object.shape);
 
-		if (stroke.points.length < 2) return;
-
-		ctx.save();
-
-		ctx.beginPath();
-		ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-
-		for (const point of stroke.points.slice(1)) {
-			ctx.lineTo(point.x, point.y);
-		}
-
-		if (object.shape.fill) {
-			ctx.globalAlpha = object.shape.fill.opacity;
-			ctx.fillStyle = object.shape.fill.color;
-			ctx.fill();
-			ctx.globalAlpha = 1;
-		}
-
-		ctx.strokeStyle = object.shape.color;
-		ctx.lineWidth = object.shape.width;
-		ctx.lineCap = "round";
-		ctx.lineJoin = "round";
-		ctx.stroke();
-
-		ctx.restore();
+		renderStrokePath(ctx, stroke, {
+			fill: object.shape.fill,
+			stroke: true,
+		});
 
 		return;
 	}
 
-	const stroke = object.stroke;
+	renderStrokePath(ctx, object.stroke);
+}
+
+export function renderBoundaryObject(
+	ctx: CanvasRenderingContext2D,
+	object: DrawingObject,
+) {
+	if (object.type === "bucket-fill") return;
+
+	const stroke =
+		object.type === "shape"
+			? shapeObjectToStroke(object.shape)
+			: object.stroke;
 
 	if (stroke.points.length < 2) return;
 
 	ctx.save();
-	ctx.strokeStyle = stroke.color;
-	ctx.lineWidth = stroke.width;
+
+	ctx.strokeStyle = "#000000";
+	ctx.lineWidth = Math.max(1, stroke.width);
 	ctx.lineCap = "round";
 	ctx.lineJoin = "round";
 
@@ -548,6 +602,23 @@ export function renderDrawingObject(
 
 	ctx.stroke();
 	ctx.restore();
+}
+
+export function renderDrawingObjects(
+	ctx: CanvasRenderingContext2D,
+	objects: DrawingObject[],
+) {
+	for (const object of objects) {
+		if (object.type === "bucket-fill") {
+			renderDrawingObject(ctx, object);
+		}
+	}
+
+	for (const object of objects) {
+		if (object.type !== "bucket-fill") {
+			renderDrawingObject(ctx, object);
+		}
+	}
 }
 
 export function clampFillOpacity(value: number) {

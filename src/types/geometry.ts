@@ -33,6 +33,22 @@ export type ShapeFill = {
 	opacity: number;
 };
 
+export type BucketFillSpan = {
+	x: number;
+	y: number;
+	width: number;
+};
+
+export type BucketFillObject = {
+	id: string;
+	color: string;
+	opacity: number;
+	seed: Point;
+	canvasWidth: number;
+	canvasHeight: number;
+	spans: BucketFillSpan[];
+};
+
 export type ShapeObject = {
 	id: string;
 	kind: ShapeKind;
@@ -56,4 +72,9 @@ export type DrawingObject =
 			type: "shape";
 			id: string;
 			shape: ShapeObject;
+	  }
+	| {
+			type: "bucket-fill";
+			id: string;
+			fill: BucketFillObject;
 	  };
