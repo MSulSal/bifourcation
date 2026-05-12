@@ -4,6 +4,7 @@ import { evaluateFourierTerms, type FourierTerm } from "../math/fourier";
 import type { Point } from "../types/geometry";
 
 export type BivectorView = "blade" | "disk" | "companion";
+export type AnimationTraceMode = "sequential" | "simultaneous";
 
 type AnimatedStroke = {
 	id: string;
@@ -19,7 +20,19 @@ type RotorCanvasProps = {
 	isPlaying: boolean;
 	termLimit: number;
 	bivectorView: BivectorView;
+	animationTraceMode: AnimationTraceMode;
 };
+
+type LastDrawnFrame =
+	| {
+			mode: "sequential";
+			strokeIndex: number;
+			progress: number;
+	  }
+	| {
+			mode: "simultaneous";
+			progress: number;
+	  };
 
 const STROKE_DURATION_MS = 6500;
 const MAX_VISIBLE_COMPONENTS = 64;
@@ -34,19 +47,21 @@ export function RotorCanvas({
 	isPlaying,
 	termLimit,
 	bivectorView,
+	animationTraceMode,
 }: RotorCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const animationFrameRef = useRef<number | null>(null);
 	const startedAtRef = useRef<number | null>(null);
 	const traceRef = useRef<Multivector[]>([]);
+	const simultaneousTraceCacheRef = useRef<Map<string, Multivector[]>>(
+		new Map(),
+	);
 	const activeStrokeIndexRef = useRef(0);
 	const completedTraceCacheRef = useRef<
 		Map<string, { path: Point[]; progress: number }>
 	>(new Map());
-	const lastDrawnFrameRef = useRef<{
-		strokeIndex: number;
-		progress: number;
-	} | null>(null);
+	const lastDrawnFrameRef = useRef<LastDrawnFrame | null>(null);
+	const lastSimultaneousProgressRef = useRef(0);
 
 	function resizeCanvasToDisplaySize() {
 		const canvas = canvasRef.current;
@@ -74,10 +89,12 @@ export function RotorCanvas({
 
 		ctx.clearRect(0, 0, rect.width, rect.height);
 		traceRef.current = [];
+		simultaneousTraceCacheRef.current.clear();
 		completedTraceCacheRef.current.clear();
 		activeStrokeIndexRef.current = 0;
 		startedAtRef.current = null;
 		lastDrawnFrameRef.current = null;
+		lastSimultaneousProgressRef.current = 0;
 	}
 
 	function stopAnimation() {
@@ -833,8 +850,9 @@ export function RotorCanvas({
 		if (!stroke || traceRef.current.length < 2) return;
 
 		const cachedProgress =
-			lastDrawnFrameRef.current?.strokeIndex ===
-			activeStrokeIndexRef.current
+			lastDrawnFrameRef.current?.mode === "sequential" &&
+			lastDrawnFrameRef.current.strokeIndex ===
+				activeStrokeIndexRef.current
 				? lastDrawnFrameRef.current.progress
 				: COMPLETED_STROKE_PROGRESS;
 
@@ -862,13 +880,21 @@ export function RotorCanvas({
 		}
 	}
 
-	function drawFrame(strokeIndex: number, progress: number) {
+	function drawSequentialFrame(
+		strokeIndex: number,
+		progress: number,
+		options: {
+			appendTrace?: boolean;
+		} = {},
+	) {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 
 		const rect = canvas.getBoundingClientRect();
 		const ctx = canvas.getContext("2d");
 		if (!ctx) return;
+
+		const appendTrace = options.appendTrace ?? true;
 
 		ctx.clearRect(0, 0, rect.width, rect.height);
 
@@ -889,7 +915,7 @@ export function RotorCanvas({
 			showTip: true,
 		});
 
-		if (point) {
+		if (point && appendTrace) {
 			traceRef.current.push(point);
 		}
 
@@ -901,9 +927,93 @@ export function RotorCanvas({
 		);
 
 		lastDrawnFrameRef.current = {
+			mode: "sequential",
 			strokeIndex,
 			progress,
 		};
+	}
+
+	function getSimultaneousTrace(strokeId: string) {
+		const existingTrace = simultaneousTraceCacheRef.current.get(strokeId);
+
+		if (existingTrace) return existingTrace;
+
+		const nextTrace: Multivector[] = [];
+		simultaneousTraceCacheRef.current.set(strokeId, nextTrace);
+
+		return nextTrace;
+	}
+
+	function clearSimultaneousTraces() {
+		simultaneousTraceCacheRef.current.clear();
+	}
+
+	function drawSimultaneousFrame(
+		progress: number,
+		options: {
+			appendTrace?: boolean;
+		} = {},
+	) {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const rect = canvas.getBoundingClientRect();
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		const appendTrace = options.appendTrace ?? true;
+		const rotorOpacity = strokes.length > 4 ? 0.62 : 0.86;
+
+		ctx.clearRect(0, 0, rect.width, rect.height);
+
+		for (const stroke of strokes) {
+			const trace = getSimultaneousTrace(stroke.id);
+
+			drawTrace(trace, stroke.color, Math.max(2, stroke.width), 0.95);
+		}
+
+		for (const stroke of strokes) {
+			const point = drawBladeSet(stroke, progress, {
+				opacity: rotorOpacity,
+				showTip: true,
+			});
+
+			if (point && appendTrace) {
+				const trace = getSimultaneousTrace(stroke.id);
+				trace.push(point);
+			}
+		}
+
+		for (const stroke of strokes) {
+			const trace = getSimultaneousTrace(stroke.id);
+
+			drawTrace(trace, stroke.color, Math.max(2, stroke.width), 1);
+		}
+
+		lastDrawnFrameRef.current = {
+			mode: "simultaneous",
+			progress,
+		};
+	}
+
+	function redrawLastFrameWithoutAppending() {
+		const lastFrame = lastDrawnFrameRef.current;
+
+		if (!lastFrame) return false;
+
+		if (lastFrame.mode === "sequential") {
+			drawSequentialFrame(lastFrame.strokeIndex, lastFrame.progress, {
+				appendTrace: false,
+			});
+
+			return true;
+		}
+
+		drawSimultaneousFrame(lastFrame.progress, {
+			appendTrace: false,
+		});
+
+		return true;
 	}
 
 	useEffect(() => {
@@ -920,12 +1030,7 @@ export function RotorCanvas({
 				return;
 			}
 
-			if (lastDrawnFrameRef.current) {
-				drawFrame(
-					lastDrawnFrameRef.current.strokeIndex,
-					lastDrawnFrameRef.current.progress,
-				);
-			}
+			redrawLastFrameWithoutAppending();
 		});
 
 		resizeObserver.observe(canvas);
@@ -933,11 +1038,17 @@ export function RotorCanvas({
 		return () => {
 			resizeObserver.disconnect();
 		};
-	}, [isActive, strokes, termLimit, bivectorView]);
+	}, [isActive, strokes, termLimit, bivectorView, animationTraceMode]);
 
 	useEffect(() => {
+		traceRef.current = [];
+		simultaneousTraceCacheRef.current.clear();
 		completedTraceCacheRef.current.clear();
-	}, [strokes, termLimit]);
+		activeStrokeIndexRef.current = 0;
+		lastDrawnFrameRef.current = null;
+		startedAtRef.current = null;
+		lastSimultaneousProgressRef.current = 0;
+	}, [strokes, termLimit, animationTraceMode]);
 
 	useEffect(() => {
 		if (!isActive || strokes.length === 0) {
@@ -949,18 +1060,20 @@ export function RotorCanvas({
 		if (!isPlaying) {
 			stopAnimation();
 
-			if (lastDrawnFrameRef.current) {
-				drawFrame(
-					lastDrawnFrameRef.current.strokeIndex,
-					lastDrawnFrameRef.current.progress,
-				);
-
+			if (redrawLastFrameWithoutAppending()) {
 				return;
 			}
 
 			traceRef.current = [];
+			simultaneousTraceCacheRef.current.clear();
 			activeStrokeIndexRef.current = 0;
-			drawFrame(0, 0);
+
+			if (animationTraceMode === "simultaneous") {
+				drawSimultaneousFrame(0, { appendTrace: false });
+				return;
+			}
+
+			drawSequentialFrame(0, 0, { appendTrace: false });
 
 			return;
 		}
@@ -976,8 +1089,24 @@ export function RotorCanvas({
 				startedAtRef.current = timestamp;
 			}
 
-			const animationDuration = strokes.length * STROKE_DURATION_MS;
 			const elapsed = timestamp - startedAtRef.current;
+
+			if (animationTraceMode === "simultaneous") {
+				const loopElapsed = elapsed % STROKE_DURATION_MS;
+				const progress = loopElapsed / STROKE_DURATION_MS;
+
+				if (progress < lastSimultaneousProgressRef.current) {
+					clearSimultaneousTraces();
+				}
+
+				drawSimultaneousFrame(progress);
+				lastSimultaneousProgressRef.current = progress;
+				animationFrameRef.current = requestAnimationFrame(animate);
+
+				return;
+			}
+
+			const animationDuration = strokes.length * STROKE_DURATION_MS;
 			const loopElapsed = elapsed % animationDuration;
 
 			const strokeIndex = Math.min(
@@ -989,16 +1118,21 @@ export function RotorCanvas({
 				loopElapsed - strokeIndex * STROKE_DURATION_MS;
 			const progress = strokeElapsed / STROKE_DURATION_MS;
 
-			if (
-				strokeIndex !== activeStrokeIndexRef.current ||
-				progress < 0.01
-			) {
+			if (strokeIndex !== activeStrokeIndexRef.current) {
 				cacheCompletedTrace(strokes[activeStrokeIndexRef.current]);
 				traceRef.current = [];
 				activeStrokeIndexRef.current = strokeIndex;
 			}
 
-			drawFrame(strokeIndex, progress);
+			if (
+				strokeIndex === 0 &&
+				activeStrokeIndexRef.current !== 0 &&
+				progress < 0.02
+			) {
+				completedTraceCacheRef.current.clear();
+			}
+
+			drawSequentialFrame(strokeIndex, progress);
 
 			animationFrameRef.current = requestAnimationFrame(animate);
 		}
@@ -1008,7 +1142,14 @@ export function RotorCanvas({
 		return () => {
 			stopAnimation();
 		};
-	}, [isActive, isPlaying, strokes, termLimit, bivectorView]);
+	}, [
+		isActive,
+		isPlaying,
+		strokes,
+		termLimit,
+		bivectorView,
+		animationTraceMode,
+	]);
 
 	return (
 		<canvas

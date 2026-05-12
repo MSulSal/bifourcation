@@ -6,9 +6,14 @@ import {
 	type ChangeEvent,
 	type SetStateAction,
 } from "react";
+import { Settings } from "lucide-react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
-import { RotorCanvas, type BivectorView } from "./components/RotorCanvas";
+import {
+	RotorCanvas,
+	type AnimationTraceMode,
+	type BivectorView,
+} from "./components/RotorCanvas";
 import { ShapePlacementCanvas } from "./components/ShapePlacementCanvas";
 import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
@@ -40,12 +45,14 @@ const SHAPE_TOOLS: ShapeKind[] = [
 const DEFAULT_PEN_COLOR = PEN_COLORS[0];
 const DEFAULT_PEN_WIDTH = 4;
 const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
+const DEFAULT_ANIMATION_TRACE_MODE: AnimationTraceMode = "sequential";
 
 const STORAGE_KEYS = {
 	penColor: "bifourcation.penColor",
 	penWidth: "bifourcation.penWidth",
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
+	animationTraceMode: "bifourcation.animationTraceMode",
 } as const;
 
 const ACTIVE_BUTTON_CLASS =
@@ -68,6 +75,12 @@ function clampNumber(value: number, min: number, max: number) {
 
 function isBivectorView(value: string | null): value is BivectorView {
 	return value === "blade" || value === "disk" || value === "companion";
+}
+
+function isAnimationTraceMode(
+	value: string | null,
+): value is AnimationTraceMode {
+	return value === "sequential" || value === "simultaneous";
 }
 
 function readStoredValue(key: string) {
@@ -106,6 +119,14 @@ function readStoredBivectorView(): BivectorView {
 	const storedView = readStoredValue(STORAGE_KEYS.bivectorView);
 
 	return isBivectorView(storedView) ? storedView : DEFAULT_BIVECTOR_VIEW;
+}
+
+function readStoredAnimationTraceMode(): AnimationTraceMode {
+	const storedMode = readStoredValue(STORAGE_KEYS.animationTraceMode);
+
+	return isAnimationTraceMode(storedMode)
+		? storedMode
+		: DEFAULT_ANIMATION_TRACE_MODE;
 }
 
 function readStoredSoundEnabled() {
@@ -244,6 +265,8 @@ function App() {
 	const [bivectorView, setBivectorView] = useState<BivectorView>(
 		readStoredBivectorView,
 	);
+	const [animationTraceMode, setAnimationTraceMode] =
+		useState<AnimationTraceMode>(readStoredAnimationTraceMode);
 	const [isSoundEnabled, setIsSoundEnabled] = useState(
 		readStoredSoundEnabled,
 	);
@@ -331,6 +354,13 @@ function App() {
 		setMode("draw");
 		setIsSnapshotMenuOpen(false);
 
+		stopSoundFrame();
+		soundEngineRef.current?.stop();
+		soundEngineRef.current?.resetClock();
+	}
+
+	function pauseAnimationClock() {
+		setIsAnimationPlaying(false);
 		stopSoundFrame();
 		soundEngineRef.current?.stop();
 		soundEngineRef.current?.resetClock();
@@ -455,6 +485,15 @@ function App() {
 		} catch (error) {
 			console.error("Unable to start audio engine.", error);
 			setIsSoundEnabled(false);
+		}
+	}
+
+	function changeAnimationTraceMode(nextMode: AnimationTraceMode) {
+		setAnimationTraceMode(nextMode);
+		pauseAnimationClock();
+
+		if (mode === "animate") {
+			setMode("animate");
 		}
 	}
 
@@ -626,6 +665,10 @@ function App() {
 	}, [bivectorView]);
 
 	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.animationTraceMode, animationTraceMode);
+	}, [animationTraceMode]);
+
+	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.soundEnabled, String(isSoundEnabled));
 	}, [isSoundEnabled]);
 
@@ -778,6 +821,7 @@ function App() {
 						isPlaying={isAnimationPlaying}
 						termLimit={visibleTermCount}
 						bivectorView={bivectorView}
+						animationTraceMode={animationTraceMode}
 					/>
 
 					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-wrap gap-2 text-[11px] font-medium text-zinc-100/45 sm:text-xs">
@@ -800,7 +844,9 @@ function App() {
 							<>
 								<span className="hidden sm:inline">·</span>
 								<span className="hidden font-mono sm:inline">
-									termₖ = cₖRₖ(t)
+									{animationTraceMode === "sequential"
+										? "sequential strokes"
+										: "together mode"}
 								</span>
 							</>
 						)}
@@ -854,14 +900,13 @@ function App() {
 								: "Open settings drawer"
 						}
 					>
-						<span
+						<Settings
+							size={19}
 							className={[
-								"text-lg transition-transform duration-200",
-								isDrawerOpen ? "rotate-180" : "rotate-0",
+								"transition-transform duration-200",
+								isDrawerOpen ? "rotate-90" : "rotate-0",
 							].join(" ")}
-						>
-							◀
-						</span>
+						/>
 					</button>
 
 					<div
@@ -898,6 +943,43 @@ function App() {
 
 								<p className="mt-3 text-xs leading-5 text-zinc-500">
 									Shortcuts: Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
+								</p>
+							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Animation
+								</p>
+
+								<div className="grid grid-cols-2 gap-2">
+									{(
+										["sequential", "simultaneous"] as const
+									).map(traceMode => (
+										<button
+											key={traceMode}
+											className={[
+												"rounded-xl border px-3 py-3 text-sm font-semibold transition",
+												animationTraceMode === traceMode
+													? "border-zinc-50 bg-zinc-50 text-zinc-950"
+													: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+											].join(" ")}
+											onClick={() =>
+												changeAnimationTraceMode(
+													traceMode,
+												)
+											}
+										>
+											{traceMode === "sequential"
+												? "Sequential"
+												: "Together"}
+										</button>
+									))}
+								</div>
+
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Sequential traces strokes in drawing order.
+									Together starts every stroke at the same
+									time.
 								</p>
 							</section>
 
