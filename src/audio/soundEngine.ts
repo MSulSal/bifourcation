@@ -2,6 +2,7 @@ import type { FourierTerm } from "../math/fourier";
 import type { Point } from "../types/geometry";
 
 export type BivectorSoundView = "blade" | "disk" | "companion";
+export type SoundTraceMode = "sequential" | "simultaneous";
 
 export type SonicStroke = {
 	id: string;
@@ -11,8 +12,12 @@ export type SonicStroke = {
 	terms: FourierTerm[];
 };
 
-const STROKE_DURATION_MS = 6500;
+const DRAW_SPEED_PX_PER_MS = 0.16;
+const MIN_STROKE_DURATION_MS = 900;
+const MAX_STROKE_DURATION_MS = 28000;
+
 const MAX_SOUND_TERMS = 14;
+const MAX_SIMULTANEOUS_SOUND_STROKES = 3;
 
 const ROOT_MIDI = 50; // D3
 const SCALE = [0, 2, 4, 7, 9]; // D major pentatonic
@@ -41,6 +46,20 @@ type SinePartial = {
 	detune?: number;
 };
 
+type StrokeTimelineEntry = {
+	stroke: SonicStroke;
+	startMs: number;
+	endMs: number;
+	durationMs: number;
+};
+
+type ActiveSoundStroke = {
+	stroke: SonicStroke;
+	progress: number;
+	durationMs: number;
+	sampled: SampledPathPoint;
+};
+
 function midiToHz(midi: number) {
 	return 440 * 2 ** ((midi - 69) / 12);
 }
@@ -66,6 +85,83 @@ function getAudioContextConstructor() {
 		(window as WebAudioWindow).webkitAudioContext ??
 		null
 	);
+}
+
+function getPathLength(points: Point[]) {
+	let total = 0;
+
+	for (let index = 1; index < points.length; index += 1) {
+		const previous = points[index - 1];
+		const current = points[index];
+
+		total += Math.hypot(current.x - previous.x, current.y - previous.y);
+	}
+
+	return total;
+}
+
+function getStrokeDurationMs(stroke: SonicStroke) {
+	const length = getPathLength(stroke.path);
+
+	if (length === 0) return MIN_STROKE_DURATION_MS;
+
+	return Math.min(
+		MAX_STROKE_DURATION_MS,
+		Math.max(MIN_STROKE_DURATION_MS, length / DRAW_SPEED_PX_PER_MS),
+	);
+}
+
+function getSequentialTimeline(strokes: SonicStroke[]) {
+	const timeline: StrokeTimelineEntry[] = [];
+	let cursorMs = 0;
+
+	for (const stroke of strokes) {
+		const durationMs = getStrokeDurationMs(stroke);
+
+		timeline.push({
+			stroke,
+			startMs: cursorMs,
+			endMs: cursorMs + durationMs,
+			durationMs,
+		});
+
+		cursorMs += durationMs;
+	}
+
+	return {
+		timeline,
+		totalDurationMs: Math.max(cursorMs, MIN_STROKE_DURATION_MS),
+	};
+}
+
+function getSequentialSoundFrame(strokes: SonicStroke[], loopElapsed: number) {
+	const { timeline } = getSequentialTimeline(strokes);
+
+	if (timeline.length === 0) {
+		return null;
+	}
+
+	const timelineIndex = timeline.findIndex(
+		entry => loopElapsed >= entry.startMs && loopElapsed < entry.endMs,
+	);
+
+	const strokeIndex =
+		timelineIndex === -1 ? timeline.length - 1 : timelineIndex;
+	const entry = timeline[strokeIndex];
+	const strokeElapsed = loopElapsed - entry.startMs;
+
+	return {
+		stroke: entry.stroke,
+		strokeIndex,
+		progress: clamp(strokeElapsed / entry.durationMs, 0, 1),
+		durationMs: entry.durationMs,
+	};
+}
+
+function getSimultaneousCycleDuration(strokes: SonicStroke[]) {
+	if (strokes.length === 0) return MIN_STROKE_DURATION_MS;
+
+	return Math.max(...strokes.map(getStrokeDurationMs));
 }
 
 function getPathBounds(path: Point[]) {
@@ -194,6 +290,10 @@ function getSoundStepMs(view: BivectorSoundView, curvature: number) {
 	return 210 - curvature * 45;
 }
 
+function getTogetherSoundStepMs(view: BivectorSoundView, curvature: number) {
+	return Math.max(95, getSoundStepMs(view, curvature) * 0.62);
+}
+
 export class DrawingSoundEngine {
 	private context: AudioContext | null = null;
 	private inputGain: GainNode | null = null;
@@ -203,6 +303,8 @@ export class DrawingSoundEngine {
 	private lastTriggerAtMs = 0;
 	private noteIndex = 0;
 	private activeStrokeId: string | null = null;
+	private togetherCursor = 0;
+	private lastTogetherLoopElapsed = 0;
 	private isRunning = false;
 
 	async enable() {
@@ -250,48 +352,164 @@ export class DrawingSoundEngine {
 		this.lastTriggerAtMs = 0;
 		this.noteIndex = 0;
 		this.activeStrokeId = null;
+		this.togetherCursor = 0;
+		this.lastTogetherLoopElapsed = 0;
 	}
 
-	tick(strokes: SonicStroke[], view: BivectorSoundView) {
+	tick(
+		strokes: SonicStroke[],
+		view: BivectorSoundView,
+		traceMode: SoundTraceMode = "sequential",
+	) {
 		if (!this.isRunning || !this.context || !this.inputGain) return;
 		if (strokes.length === 0) return;
 
+		if (traceMode === "simultaneous") {
+			this.tickTogether(strokes, view);
+			return;
+		}
+
+		this.tickSequential(strokes, view);
+	}
+
+	private tickSequential(strokes: SonicStroke[], view: BivectorSoundView) {
 		const nowMs = performance.now();
 
 		if (this.startedAtMs === null) {
 			this.startedAtMs = nowMs;
 		}
 
-		const animationDuration = strokes.length * STROKE_DURATION_MS;
+		const { totalDurationMs } = getSequentialTimeline(strokes);
 		const elapsed = nowMs - this.startedAtMs;
-		const loopElapsed = elapsed % animationDuration;
+		const loopElapsed = elapsed % totalDurationMs;
+		const frame = getSequentialSoundFrame(strokes, loopElapsed);
 
-		const strokeIndex = Math.min(
-			strokes.length - 1,
-			Math.floor(loopElapsed / STROKE_DURATION_MS),
-		);
+		if (!frame) return;
 
-		const strokeElapsed = loopElapsed - strokeIndex * STROKE_DURATION_MS;
-		const progress = strokeElapsed / STROKE_DURATION_MS;
-		const stroke = strokes[strokeIndex];
-
-		if (!stroke) return;
-
-		const sampled = samplePathAtProgress(stroke.path, progress);
+		const sampled = samplePathAtProgress(frame.stroke.path, frame.progress);
 		const stepMs = getSoundStepMs(view, sampled.curvature);
 
 		if (nowMs - this.lastTriggerAtMs < stepMs) return;
 
-		if (stroke.id !== this.activeStrokeId) {
-			this.activeStrokeId = stroke.id;
+		if (frame.stroke.id !== this.activeStrokeId) {
+			this.activeStrokeId = frame.stroke.id;
 			this.noteIndex = 0;
 		}
 
+		const didTrigger = this.triggerStrokeSound({
+			stroke: frame.stroke,
+			progress: frame.progress,
+			sampled,
+			view,
+			noteOffset: 0,
+		});
+
+		if (!didTrigger) return;
+
+		this.noteIndex += 1;
+		this.lastTriggerAtMs = nowMs;
+	}
+
+	private tickTogether(strokes: SonicStroke[], view: BivectorSoundView) {
+		const nowMs = performance.now();
+
+		if (this.startedAtMs === null) {
+			this.startedAtMs = nowMs;
+		}
+
+		const cycleDurationMs = getSimultaneousCycleDuration(strokes);
+		const elapsed = nowMs - this.startedAtMs;
+		const loopElapsed = elapsed % cycleDurationMs;
+
+		if (loopElapsed < this.lastTogetherLoopElapsed) {
+			this.noteIndex = 0;
+			this.togetherCursor = 0;
+			this.activeStrokeId = null;
+		}
+
+		this.lastTogetherLoopElapsed = loopElapsed;
+
+		const activeStrokes: ActiveSoundStroke[] = strokes
+			.map(stroke => {
+				const durationMs = getStrokeDurationMs(stroke);
+				const progress = clamp(loopElapsed / durationMs, 0, 1);
+				const sampled = samplePathAtProgress(stroke.path, progress);
+
+				return {
+					stroke,
+					progress,
+					durationMs,
+					sampled,
+				};
+			})
+			.filter(({ stroke, durationMs }) => {
+				if (loopElapsed > durationMs) return false;
+
+				return stroke.terms.some(
+					term => term.frequency !== 0 && term.amplitude > 0,
+				);
+			});
+
+		if (activeStrokes.length === 0) return;
+
+		const cursor = this.togetherCursor % activeStrokes.length;
+		const representative = activeStrokes[cursor];
+		const stepMs = getTogetherSoundStepMs(
+			view,
+			representative.sampled.curvature,
+		);
+
+		if (nowMs - this.lastTriggerAtMs < stepMs) return;
+
+		const voices = Math.min(
+			MAX_SIMULTANEOUS_SOUND_STROKES,
+			activeStrokes.length,
+		);
+		let triggeredCount = 0;
+
+		for (let voiceIndex = 0; voiceIndex < voices; voiceIndex += 1) {
+			const activeStroke =
+				activeStrokes[(cursor + voiceIndex) % activeStrokes.length];
+
+			const didTrigger = this.triggerStrokeSound({
+				stroke: activeStroke.stroke,
+				progress: activeStroke.progress,
+				sampled: activeStroke.sampled,
+				view,
+				noteOffset: voiceIndex,
+			});
+
+			if (didTrigger) {
+				triggeredCount += 1;
+			}
+		}
+
+		if (triggeredCount === 0) return;
+
+		this.activeStrokeId = "together";
+		this.noteIndex += 1;
+		this.togetherCursor = (cursor + 1) % activeStrokes.length;
+		this.lastTriggerAtMs = nowMs;
+	}
+
+	private triggerStrokeSound({
+		stroke,
+		progress,
+		sampled,
+		view,
+		noteOffset,
+	}: {
+		stroke: SonicStroke;
+		progress: number;
+		sampled: SampledPathPoint;
+		view: BivectorSoundView;
+		noteOffset: number;
+	}) {
 		const audibleTerms = stroke.terms
 			.filter(term => term.frequency !== 0 && term.amplitude > 0)
 			.slice(0, MAX_SOUND_TERMS);
 
-		if (audibleTerms.length === 0) return;
+		if (audibleTerms.length === 0) return false;
 
 		const maxAmplitude = Math.max(
 			...audibleTerms.map(term => term.amplitude),
@@ -311,7 +529,7 @@ export class DrawingSoundEngine {
 		const pathOffset = Math.floor(progress * audibleTerms.length);
 
 		const termIndex =
-			(pathOffset + tangentOffset + this.noteIndex * 2) %
+			(pathOffset + tangentOffset + (this.noteIndex + noteOffset) * 2) %
 			audibleTerms.length;
 
 		const term = audibleTerms[termIndex];
@@ -326,8 +544,7 @@ export class DrawingSoundEngine {
 			sampled,
 		});
 
-		this.noteIndex += 1;
-		this.lastTriggerAtMs = nowMs;
+		return true;
 	}
 
 	private ensureContext() {

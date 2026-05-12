@@ -736,7 +736,7 @@ function App() {
 		void activeEngine.start();
 
 		function tickSound() {
-			activeEngine.tick(sonicStrokes, bivectorView);
+			activeEngine.tick(sonicStrokes, bivectorView, animationTraceMode);
 			soundFrameRef.current = requestAnimationFrame(tickSound);
 		}
 
