@@ -15,7 +15,7 @@ import {
 	Trash2,
 	Undo2,
 } from "lucide-react";
-import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
+import { DrawingSoundEngine, type RotorSoundFrame } from "./audio/soundEngine";
 import { BucketFillCanvas } from "./components/BucketFillCanvas";
 import { DrawingCanvas } from "./components/DrawingCanvas";
 import { ObjectTransformCanvas } from "./components/ObjectTransformCanvas";
@@ -540,7 +540,6 @@ function cloneDrawingObject(object: DrawingObject): DrawingObject | null {
 function App() {
 	const canvasStageRef = useRef<HTMLElement | null>(null);
 	const soundEngineRef = useRef<DrawingSoundEngine | null>(null);
-	const soundFrameRef = useRef<number | null>(null);
 	const imageInputRef = useRef<HTMLInputElement | null>(null);
 	const editSnapshotRef = useRef<DrawingObject[] | null>(null);
 
@@ -633,18 +632,6 @@ function App() {
 		[strokes, resampledPointCount],
 	);
 
-	const sonicStrokes: SonicStroke[] = useMemo(
-		() =>
-			animatedStrokes.map(stroke => ({
-				id: stroke.id,
-				color: stroke.color,
-				width: stroke.width,
-				path: stroke.path,
-				terms: stroke.terms,
-			})),
-		[animatedStrokes],
-	);
-
 	const hasAnimationData = animatedStrokes.some(
 		stroke => stroke.terms.length > 0,
 	);
@@ -698,11 +685,17 @@ function App() {
 		return soundEngineRef.current;
 	}
 
-	function stopSoundFrame() {
-		if (soundFrameRef.current !== null) {
-			cancelAnimationFrame(soundFrameRef.current);
-			soundFrameRef.current = null;
+	function handleRotorSoundFrame(frame: RotorSoundFrame) {
+		if (
+			!isSoundEnabled ||
+			!isAnimationPlaying ||
+			!isAnimationMode ||
+			frame.strokes.length === 0
+		) {
+			return;
 		}
+
+		getSoundEngine().updateFromRotorFrame(frame);
 	}
 
 	function resetAnimationSideEffects() {
@@ -710,14 +703,12 @@ function App() {
 		setMode("draw");
 		setIsSnapshotMenuOpen(false);
 
-		stopSoundFrame();
 		soundEngineRef.current?.stop();
 		soundEngineRef.current?.resetClock();
 	}
 
 	function pauseAnimationClock() {
 		setIsAnimationPlaying(false);
-		stopSoundFrame();
 		soundEngineRef.current?.stop();
 		soundEngineRef.current?.resetClock();
 	}
@@ -869,7 +860,6 @@ function App() {
 	async function toggleSound() {
 		if (isSoundEnabled) {
 			setIsSoundEnabled(false);
-			stopSoundFrame();
 			soundEngineRef.current?.stop();
 			return;
 		}
@@ -1284,50 +1274,33 @@ function App() {
 	}, []);
 
 	useEffect(() => {
-		stopSoundFrame();
-
 		const engine = soundEngineRef.current;
+		const shouldRunSound =
+			isSoundEnabled &&
+			isAnimationPlaying &&
+			isAnimationMode &&
+			hasAnimationData;
 
-		if (
-			!engine ||
-			!isSoundEnabled ||
-			!isAnimationPlaying ||
-			!isAnimationMode ||
-			sonicStrokes.length === 0
-		) {
+		if (!shouldRunSound) {
 			engine?.stop();
 			return;
 		}
 
-		const activeEngine = engine;
+		let isCancelled = false;
+		const activeEngine = getSoundEngine();
 
-		void activeEngine.start();
+		void activeEngine.start().catch(error => {
+			if (isCancelled) return;
 
-		function tickSound() {
-			activeEngine.tick(
-				sonicStrokes,
-				bivectorView,
-				animationTraceMode,
-				effectiveVisibleTermCount,
-			);
-			soundFrameRef.current = requestAnimationFrame(tickSound);
-		}
-
-		soundFrameRef.current = requestAnimationFrame(tickSound);
+			console.error("Unable to start audio engine.", error);
+			setIsSoundEnabled(false);
+		});
 
 		return () => {
-			stopSoundFrame();
+			isCancelled = true;
 			activeEngine.stop();
 		};
-	}, [
-		isSoundEnabled,
-		isAnimationPlaying,
-		isAnimationMode,
-		sonicStrokes,
-		bivectorView,
-		animationTraceMode,
-		effectiveVisibleTermCount,
-	]);
+	}, [isSoundEnabled, isAnimationPlaying, isAnimationMode, hasAnimationData]);
 
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -1423,6 +1396,7 @@ function App() {
 						termLimit={effectiveVisibleTermCount}
 						bivectorView={bivectorView}
 						animationTraceMode={animationTraceMode}
+						onSoundFrame={handleRotorSoundFrame}
 					/>
 
 					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-wrap gap-2 text-[11px] font-medium text-zinc-100/45 sm:text-xs">

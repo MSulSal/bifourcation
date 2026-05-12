@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Multivector } from "../math/clifford";
 import { evaluateFourierTerms, type FourierTerm } from "../math/fourier";
+import type { RotorSoundFrame } from "../audio/soundEngine";
 import type { Point } from "../types/geometry";
 
 export type BivectorView = "blade" | "disk" | "companion";
@@ -21,6 +22,7 @@ type RotorCanvasProps = {
 	termLimit: number;
 	bivectorView: BivectorView;
 	animationTraceMode: AnimationTraceMode;
+	onSoundFrame?: (frame: RotorSoundFrame) => void;
 };
 
 type LastDrawnFrame =
@@ -145,6 +147,7 @@ export function RotorCanvas({
 	termLimit,
 	bivectorView,
 	animationTraceMode,
+	onSoundFrame,
 }: RotorCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const animationFrameRef = useRef<number | null>(null);
@@ -869,6 +872,93 @@ export function RotorCanvas({
 		);
 	}
 
+	function getRotorSoundStroke(
+		stroke: AnimatedStroke,
+		progress: number,
+		activity: number,
+		strokeIndex: number,
+	): RotorSoundFrame["strokes"][number] | null {
+		const activeTermLimit = Math.min(termLimit, stroke.terms.length);
+
+		const { rotors } = evaluateFourierTerms(
+			stroke.terms,
+			progress,
+			activeTermLimit,
+		);
+
+		if (rotors.length === 0) return null;
+
+		return {
+			id: `${stroke.id}:${strokeIndex}`,
+			color: stroke.color,
+			width: stroke.width,
+			path: stroke.path,
+			progress,
+			activity,
+			rotors: rotors.map(rotor => ({
+				center: getCanvasPoint(rotor.center),
+				tip: getCanvasPoint(rotor.tip),
+				radius: rotor.radius,
+				frequency: rotor.frequency,
+			})),
+		};
+	}
+
+	function emitSoundFrame(soundStrokes: RotorSoundFrame["strokes"]) {
+		if (
+			!onSoundFrame ||
+			!isActive ||
+			!isPlaying ||
+			soundStrokes.length === 0
+		) {
+			return;
+		}
+
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		const rect = canvas.getBoundingClientRect();
+
+		onSoundFrame({
+			view: bivectorView,
+			canvasWidth: rect.width,
+			canvasHeight: rect.height,
+			strokes: soundStrokes,
+		});
+	}
+
+	function emitSequentialSoundFrame(strokeIndex: number, progress: number) {
+		const stroke = strokes[strokeIndex];
+		if (!stroke) return;
+
+		const soundStroke = getRotorSoundStroke(
+			stroke,
+			progress,
+			1,
+			strokeIndex,
+		);
+		if (!soundStroke) return;
+
+		emitSoundFrame([soundStroke]);
+	}
+
+	function emitSimultaneousSoundFrame(loopElapsed: number) {
+		const soundStrokes = strokes
+			.map((stroke, strokeIndex) => {
+				const progress = getSimultaneousStrokeProgress(
+					stroke,
+					loopElapsed,
+				);
+
+				return getRotorSoundStroke(stroke, progress, 1, strokeIndex);
+			})
+			.filter((stroke): stroke is RotorSoundFrame["strokes"][number] =>
+				Boolean(stroke),
+			);
+
+		emitSoundFrame(soundStrokes);
+	}
+
 	function drawBladeSet(
 		stroke: AnimatedStroke,
 		progress: number,
@@ -1201,6 +1291,7 @@ export function RotorCanvas({
 				}
 
 				drawSimultaneousFrame(loopElapsed);
+				emitSimultaneousSoundFrame(loopElapsed);
 				lastSimultaneousLoopElapsedRef.current = loopElapsed;
 				animationFrameRef.current = requestAnimationFrame(animate);
 
@@ -1226,6 +1317,7 @@ export function RotorCanvas({
 			}
 
 			drawSequentialFrame(strokeIndex, progress);
+			emitSequentialSoundFrame(strokeIndex, progress);
 
 			animationFrameRef.current = requestAnimationFrame(animate);
 		}
@@ -1242,6 +1334,7 @@ export function RotorCanvas({
 		termLimit,
 		bivectorView,
 		animationTraceMode,
+		onSoundFrame,
 	]);
 
 	return (
