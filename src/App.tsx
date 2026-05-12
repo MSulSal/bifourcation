@@ -91,6 +91,8 @@ const DEFAULT_PEN_COLOR = "#E84D3D";
 const DEFAULT_PEN_WIDTH = 4;
 const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
 const DEFAULT_ANIMATION_TRACE_MODE: AnimationTraceMode = "sequential";
+const DEFAULT_VISIBLE_TERM_COUNT = 64;
+const MAX_FOURIER_TERMS = 256;
 const PASTE_OFFSET = 24;
 
 const STORAGE_KEYS = {
@@ -99,6 +101,7 @@ const STORAGE_KEYS = {
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
 	animationTraceMode: "bifourcation.animationTraceMode",
+	visibleTermCount: "bifourcation.visibleTermCount",
 } as const;
 
 const ACTIVE_BUTTON_CLASS =
@@ -217,6 +220,16 @@ function readStoredPenWidth() {
 	if (!Number.isFinite(storedWidth)) return DEFAULT_PEN_WIDTH;
 
 	return clampNumber(Math.round(storedWidth), 2, 16);
+}
+
+function readStoredVisibleTermCount() {
+	const storedTermCount = Number(
+		readStoredValue(STORAGE_KEYS.visibleTermCount),
+	);
+
+	if (!Number.isFinite(storedTermCount)) return DEFAULT_VISIBLE_TERM_COUNT;
+
+	return clampNumber(Math.round(storedTermCount), 1, MAX_FOURIER_TERMS);
 }
 
 function readStoredBivectorView(): BivectorView {
@@ -493,6 +506,9 @@ function App() {
 	);
 	const [animationTraceMode, setAnimationTraceMode] =
 		useState<AnimationTraceMode>(readStoredAnimationTraceMode);
+	const [visibleTermCount, setVisibleTermCount] = useState(
+		readStoredVisibleTermCount,
+	);
 	const [isSoundEnabled, setIsSoundEnabled] = useState(
 		readStoredSoundEnabled,
 	);
@@ -515,6 +531,13 @@ function App() {
 	const drawingObjects = drawingHistory.present;
 	const currentRgb = useMemo(() => hexToRgb(penColor), [penColor]);
 
+	const resampledPointCount = MAX_FOURIER_TERMS;
+	const effectiveVisibleTermCount = clampNumber(
+		Math.round(visibleTermCount),
+		1,
+		resampledPointCount,
+	);
+
 	const strokes = useMemo(
 		() =>
 			drawingObjects.flatMap(object => {
@@ -531,9 +554,6 @@ function App() {
 
 	const selectedShapeObject =
 		selectedObject?.type === "shape" ? selectedObject.shape : null;
-
-	const resampledPointCount = 256;
-	const visibleTermCount = resampledPointCount;
 
 	const pointCount = strokes.reduce(
 		(total, stroke) => total + stroke.points.length,
@@ -554,7 +574,7 @@ function App() {
 					terms,
 				};
 			}),
-		[strokes],
+		[strokes, resampledPointCount],
 	);
 
 	const sonicStrokes: SonicStroke[] = useMemo(
@@ -575,6 +595,12 @@ function App() {
 
 	const totalFourierTerms = animatedStrokes.reduce(
 		(total, stroke) => total + stroke.terms.length,
+		0,
+	);
+
+	const visibleFourierTerms = animatedStrokes.reduce(
+		(total, stroke) =>
+			total + Math.min(effectiveVisibleTermCount, stroke.terms.length),
 		0,
 	);
 
@@ -809,6 +835,13 @@ function App() {
 		if (mode === "animate") {
 			setMode("animate");
 		}
+	}
+
+	function changeVisibleTermCount(nextCount: number) {
+		setVisibleTermCount(
+			clampNumber(Math.round(nextCount), 1, resampledPointCount),
+		);
+		pauseAnimationClock();
 	}
 
 	function commitStroke(stroke: Stroke) {
@@ -1114,6 +1147,13 @@ function App() {
 	}, [animationTraceMode]);
 
 	useEffect(() => {
+		writeStoredValue(
+			STORAGE_KEYS.visibleTermCount,
+			String(effectiveVisibleTermCount),
+		);
+	}, [effectiveVisibleTermCount]);
+
+	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.soundEnabled, String(isSoundEnabled));
 	}, [isSoundEnabled]);
 
@@ -1316,7 +1356,7 @@ function App() {
 						strokes={animatedStrokes}
 						isActive={isAnimationMode}
 						isPlaying={isAnimationPlaying}
-						termLimit={visibleTermCount}
+						termLimit={effectiveVisibleTermCount}
 						bivectorView={bivectorView}
 						animationTraceMode={animationTraceMode}
 					/>
@@ -1330,7 +1370,9 @@ function App() {
 						<span>·</span>
 						<span>{totalResampledPoints} sampled</span>
 						<span>·</span>
-						<span>{totalFourierTerms} terms</span>
+						<span>
+							{visibleFourierTerms}/{totalFourierTerms} rotors
+						</span>
 
 						{selectedShape &&
 							mode === "draw" &&
@@ -1547,6 +1589,44 @@ function App() {
 										</button>
 									))}
 								</div>
+							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<div className="mb-3 flex items-center justify-between">
+									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Fourier rotors
+									</p>
+
+									<span className="text-sm font-medium text-zinc-200">
+										{effectiveVisibleTermCount}
+									</span>
+								</div>
+
+								<input
+									className="w-full accent-zinc-50"
+									type="range"
+									min={1}
+									max={resampledPointCount}
+									step={1}
+									value={effectiveVisibleTermCount}
+									onChange={event =>
+										changeVisibleTermCount(
+											Number(event.target.value),
+										)
+									}
+								/>
+
+								<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+									<span>Coarse</span>
+									<span>Detailed</span>
+								</div>
+
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Each visible term is a coefficient carried
+									by an e₁e₂ rotor. Fewer rotors show the
+									broad form; more rotors recover sharper
+									detail.
+								</p>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
