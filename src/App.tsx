@@ -87,12 +87,12 @@ const MS_PAINT_COLORS = [
 	"#D9B3E6",
 ];
 
+const MAX_FOURIER_TERMS = 256;
 const DEFAULT_PEN_COLOR = "#E84D3D";
 const DEFAULT_PEN_WIDTH = 4;
 const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
 const DEFAULT_ANIMATION_TRACE_MODE: AnimationTraceMode = "sequential";
-const DEFAULT_VISIBLE_TERM_COUNT = 64;
-const MAX_FOURIER_TERMS = 256;
+const DEFAULT_VISIBLE_TERM_COUNT = MAX_FOURIER_TERMS;
 const PASTE_OFFSET = 24;
 
 const STORAGE_KEYS = {
@@ -229,7 +229,7 @@ function readStoredVisibleTermCount() {
 
 	if (!Number.isFinite(storedTermCount)) return DEFAULT_VISIBLE_TERM_COUNT;
 
-	return clampNumber(Math.round(storedTermCount), 1, MAX_FOURIER_TERMS);
+	return clampNumber(Math.round(storedTermCount), 0, MAX_FOURIER_TERMS);
 }
 
 function readStoredBivectorView(): BivectorView {
@@ -446,6 +446,61 @@ function BucketIcon() {
 	);
 }
 
+function RotorCountIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<ellipse
+				cx="16"
+				cy="16"
+				rx="9.5"
+				ry="6.5"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.8"
+				transform="rotate(-18 16 16)"
+			/>
+			<path
+				d="M8.2 12.8C10.5 8.8 15.7 6.9 20.1 8.6"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M19.4 5.8L23.3 10.1L17.5 10.9"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M23.8 19.2C21.5 23.2 16.3 25.1 11.9 23.4"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M12.6 26.2L8.7 21.9L14.5 21.1"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M16 9.5V22.5M9.5 16H22.5"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.4"
+				strokeLinecap="round"
+				opacity="0.72"
+			/>
+		</svg>
+	);
+}
+
 function cloneDrawingObject(object: DrawingObject): DrawingObject | null {
 	if (object.type === "shape") {
 		const id = createId("shape");
@@ -500,6 +555,7 @@ function App() {
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isColorDrawerOpen, setIsColorDrawerOpen] = useState(false);
+	const [isRotorDrawerOpen, setIsRotorDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
 	const [bivectorView, setBivectorView] = useState<BivectorView>(
 		readStoredBivectorView,
@@ -534,7 +590,7 @@ function App() {
 	const resampledPointCount = MAX_FOURIER_TERMS;
 	const effectiveVisibleTermCount = clampNumber(
 		Math.round(visibleTermCount),
-		1,
+		0,
 		resampledPointCount,
 	);
 
@@ -839,7 +895,7 @@ function App() {
 
 	function changeVisibleTermCount(nextCount: number) {
 		setVisibleTermCount(
-			clampNumber(Math.round(nextCount), 1, resampledPointCount),
+			clampNumber(Math.round(nextCount), 0, resampledPointCount),
 		);
 		pauseAnimationClock();
 	}
@@ -1208,6 +1264,7 @@ function App() {
 				setToolMode("draw");
 				setContextMenu(null);
 				setIsColorDrawerOpen(false);
+				setIsRotorDrawerOpen(false);
 			}
 		}
 
@@ -1453,6 +1510,7 @@ function App() {
 						onClick={() => {
 							setIsDrawerOpen(value => !value);
 							setIsColorDrawerOpen(false);
+							setIsRotorDrawerOpen(false);
 						}}
 						aria-label={
 							isDrawerOpen
@@ -1474,6 +1532,7 @@ function App() {
 						onClick={() => {
 							setIsColorDrawerOpen(value => !value);
 							setIsDrawerOpen(false);
+							setIsRotorDrawerOpen(false);
 						}}
 						aria-label={
 							isColorDrawerOpen
@@ -1486,6 +1545,23 @@ function App() {
 							className="h-6 w-6 rounded-full border-2 border-zinc-100 shadow-inner"
 							style={{ backgroundColor: penColor }}
 						/>
+					</button>
+
+					<button
+						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						onClick={() => {
+							setIsRotorDrawerOpen(value => !value);
+							setIsDrawerOpen(false);
+							setIsColorDrawerOpen(false);
+						}}
+						aria-label={
+							isRotorDrawerOpen
+								? "Close rotor drawer"
+								: "Open rotor drawer"
+						}
+						title="Fourier rotors"
+					>
+						<RotorCountIcon />
 					</button>
 
 					{contextMenu && (
@@ -1525,7 +1601,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-28 z-40 max-h-[calc(100%-8rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
+							"absolute right-3 top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
 							isDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -1589,44 +1665,6 @@ function App() {
 										</button>
 									))}
 								</div>
-							</section>
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<div className="mb-3 flex items-center justify-between">
-									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Fourier rotors
-									</p>
-
-									<span className="text-sm font-medium text-zinc-200">
-										{effectiveVisibleTermCount}
-									</span>
-								</div>
-
-								<input
-									className="w-full accent-zinc-50"
-									type="range"
-									min={1}
-									max={resampledPointCount}
-									step={1}
-									value={effectiveVisibleTermCount}
-									onChange={event =>
-										changeVisibleTermCount(
-											Number(event.target.value),
-										)
-									}
-								/>
-
-								<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
-									<span>Coarse</span>
-									<span>Detailed</span>
-								</div>
-
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Each visible term is a coefficient carried
-									by an e₁e₂ rotor. Fewer rotors show the
-									broad form; more rotors recover sharper
-									detail.
-								</p>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
@@ -1873,7 +1911,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute left-3 right-3 top-28 z-40 max-h-[calc(100%-8rem)] overflow-y-auto transition-all duration-200 sm:left-auto sm:w-80",
+							"absolute left-3 right-3 top-[10.25rem] z-40 max-h-[calc(100%-11rem)] overflow-y-auto transition-all duration-200 sm:left-auto sm:w-80",
 							isColorDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -2013,6 +2051,78 @@ function App() {
 									/>
 								</label>
 							</div>
+						</section>
+					</div>
+
+					<div
+						className={[
+							"absolute left-3 right-3 top-[10.25rem] z-40 max-h-[calc(100%-11rem)] overflow-y-auto transition-all duration-200 sm:left-auto sm:w-80",
+							isRotorDrawerOpen
+								? "translate-x-0 opacity-100"
+								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
+						].join(" ")}
+					>
+						<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/80 p-3 shadow-lg backdrop-blur">
+							<div className="mb-3 flex items-center justify-between">
+								<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Fourier rotors
+								</p>
+
+								<span className="text-sm font-medium text-zinc-200">
+									{effectiveVisibleTermCount}
+								</span>
+							</div>
+
+							<div className="mb-4 flex items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-900/70 py-5 text-zinc-100">
+								<RotorCountIcon />
+							</div>
+
+							<input
+								className="w-full accent-zinc-50"
+								type="range"
+								min={0}
+								max={resampledPointCount}
+								step={1}
+								value={effectiveVisibleTermCount}
+								onChange={event =>
+									changeVisibleTermCount(
+										Number(event.target.value),
+									)
+								}
+							/>
+
+							<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+								<span>0</span>
+								<span>128</span>
+								<span>256</span>
+							</div>
+
+							<label className="mt-4 block min-w-0">
+								<span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Exact count
+								</span>
+
+								<input
+									className="block w-full min-w-0 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+									type="number"
+									min={0}
+									max={resampledPointCount}
+									step={1}
+									value={effectiveVisibleTermCount}
+									onChange={event =>
+										changeVisibleTermCount(
+											Number(event.target.value),
+										)
+									}
+								/>
+							</label>
+
+							<p className="mt-3 text-xs leading-5 text-zinc-500">
+								Each visible term is a coefficient carried by an
+								e₁e₂ rotor. Zero hides the reconstruction; fewer
+								rotors show the broad form; more rotors recover
+								sharper detail.
+							</p>
 						</section>
 					</div>
 
