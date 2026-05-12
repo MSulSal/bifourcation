@@ -31,15 +31,112 @@ type LastDrawnFrame =
 	  }
 	| {
 			mode: "simultaneous";
-			progress: number;
+			loopElapsed: number;
 	  };
 
-const STROKE_DURATION_MS = 6500;
+type StrokeTimelineEntry = {
+	stroke: AnimatedStroke;
+	startMs: number;
+	endMs: number;
+	durationMs: number;
+};
+
+const DRAW_SPEED_PX_PER_MS = 0.16;
+const MIN_STROKE_DURATION_MS = 900;
+const MAX_STROKE_DURATION_MS = 28000;
+
 const MAX_VISIBLE_COMPONENTS = 64;
 const MAX_ARROWED_COMPONENTS = 24;
 const MAX_LABELED_COMPONENTS = 10;
 
 const COMPLETED_STROKE_PROGRESS = 0.999;
+
+function getPathLength(points: Point[]) {
+	let total = 0;
+
+	for (let index = 1; index < points.length; index += 1) {
+		const previous = points[index - 1];
+		const current = points[index];
+
+		total += Math.hypot(current.x - previous.x, current.y - previous.y);
+	}
+
+	return total;
+}
+
+function getStrokeDurationMs(stroke: AnimatedStroke) {
+	const length = getPathLength(stroke.path);
+
+	if (length === 0) return MIN_STROKE_DURATION_MS;
+
+	return Math.min(
+		MAX_STROKE_DURATION_MS,
+		Math.max(MIN_STROKE_DURATION_MS, length / DRAW_SPEED_PX_PER_MS),
+	);
+}
+
+function getSequentialTimeline(strokes: AnimatedStroke[]) {
+	const timeline: StrokeTimelineEntry[] = [];
+	let cursorMs = 0;
+
+	for (const stroke of strokes) {
+		const durationMs = getStrokeDurationMs(stroke);
+
+		timeline.push({
+			stroke,
+			startMs: cursorMs,
+			endMs: cursorMs + durationMs,
+			durationMs,
+		});
+
+		cursorMs += durationMs;
+	}
+
+	return {
+		timeline,
+		totalDurationMs: Math.max(cursorMs, MIN_STROKE_DURATION_MS),
+	};
+}
+
+function getSequentialFrame(strokes: AnimatedStroke[], loopElapsed: number) {
+	const { timeline } = getSequentialTimeline(strokes);
+
+	if (timeline.length === 0) {
+		return {
+			strokeIndex: 0,
+			progress: 0,
+		};
+	}
+
+	const timelineIndex = timeline.findIndex(
+		entry => loopElapsed >= entry.startMs && loopElapsed < entry.endMs,
+	);
+
+	const strokeIndex =
+		timelineIndex === -1 ? timeline.length - 1 : timelineIndex;
+	const entry = timeline[strokeIndex];
+	const strokeElapsed = loopElapsed - entry.startMs;
+
+	return {
+		strokeIndex,
+		progress: Math.min(1, Math.max(0, strokeElapsed / entry.durationMs)),
+	};
+}
+
+function getSimultaneousCycleDuration(strokes: AnimatedStroke[]) {
+	if (strokes.length === 0) return MIN_STROKE_DURATION_MS;
+
+	return Math.max(...strokes.map(getStrokeDurationMs));
+}
+
+function getSimultaneousStrokeProgress(
+	stroke: AnimatedStroke,
+	loopElapsed: number,
+) {
+	const durationMs = getStrokeDurationMs(stroke);
+
+	return Math.min(1, Math.max(0, loopElapsed / durationMs));
+}
 
 export function RotorCanvas({
 	strokes,
@@ -61,7 +158,7 @@ export function RotorCanvas({
 		Map<string, { path: Point[]; progress: number }>
 	>(new Map());
 	const lastDrawnFrameRef = useRef<LastDrawnFrame | null>(null);
-	const lastSimultaneousProgressRef = useRef(0);
+	const lastSimultaneousLoopElapsedRef = useRef(0);
 
 	function resizeCanvasToDisplaySize() {
 		const canvas = canvasRef.current;
@@ -94,7 +191,7 @@ export function RotorCanvas({
 		activeStrokeIndexRef.current = 0;
 		startedAtRef.current = null;
 		lastDrawnFrameRef.current = null;
-		lastSimultaneousProgressRef.current = 0;
+		lastSimultaneousLoopElapsedRef.current = 0;
 	}
 
 	function stopAnimation() {
@@ -549,7 +646,6 @@ export function RotorCanvas({
 		if (!ctx) return;
 
 		const isNegativeFrequency = frequency < 0;
-
 		const diskRadius = length / Math.sqrt(Math.PI);
 
 		const diskAlpha = Math.max(0.018, 0.11 - index * 0.0014) * opacity;
@@ -949,7 +1045,7 @@ export function RotorCanvas({
 	}
 
 	function drawSimultaneousFrame(
-		progress: number,
+		loopElapsed: number,
 		options: {
 			appendTrace?: boolean;
 		} = {},
@@ -973,14 +1069,19 @@ export function RotorCanvas({
 		}
 
 		for (const stroke of strokes) {
+			const progress = getSimultaneousStrokeProgress(stroke, loopElapsed);
 			const point = drawBladeSet(stroke, progress, {
 				opacity: rotorOpacity,
 				showTip: true,
 			});
 
 			if (point && appendTrace) {
-				const trace = getSimultaneousTrace(stroke.id);
-				trace.push(point);
+				const durationMs = getStrokeDurationMs(stroke);
+
+				if (loopElapsed <= durationMs) {
+					const trace = getSimultaneousTrace(stroke.id);
+					trace.push(point);
+				}
 			}
 		}
 
@@ -992,7 +1093,7 @@ export function RotorCanvas({
 
 		lastDrawnFrameRef.current = {
 			mode: "simultaneous",
-			progress,
+			loopElapsed,
 		};
 	}
 
@@ -1009,7 +1110,7 @@ export function RotorCanvas({
 			return true;
 		}
 
-		drawSimultaneousFrame(lastFrame.progress, {
+		drawSimultaneousFrame(lastFrame.loopElapsed, {
 			appendTrace: false,
 		});
 
@@ -1047,7 +1148,7 @@ export function RotorCanvas({
 		activeStrokeIndexRef.current = 0;
 		lastDrawnFrameRef.current = null;
 		startedAtRef.current = null;
-		lastSimultaneousProgressRef.current = 0;
+		lastSimultaneousLoopElapsedRef.current = 0;
 	}, [strokes, termLimit, animationTraceMode]);
 
 	useEffect(() => {
@@ -1092,44 +1193,36 @@ export function RotorCanvas({
 			const elapsed = timestamp - startedAtRef.current;
 
 			if (animationTraceMode === "simultaneous") {
-				const loopElapsed = elapsed % STROKE_DURATION_MS;
-				const progress = loopElapsed / STROKE_DURATION_MS;
+				const cycleDurationMs = getSimultaneousCycleDuration(strokes);
+				const loopElapsed = elapsed % cycleDurationMs;
 
-				if (progress < lastSimultaneousProgressRef.current) {
+				if (loopElapsed < lastSimultaneousLoopElapsedRef.current) {
 					clearSimultaneousTraces();
 				}
 
-				drawSimultaneousFrame(progress);
-				lastSimultaneousProgressRef.current = progress;
+				drawSimultaneousFrame(loopElapsed);
+				lastSimultaneousLoopElapsedRef.current = loopElapsed;
 				animationFrameRef.current = requestAnimationFrame(animate);
 
 				return;
 			}
 
-			const animationDuration = strokes.length * STROKE_DURATION_MS;
-			const loopElapsed = elapsed % animationDuration;
-
-			const strokeIndex = Math.min(
-				strokes.length - 1,
-				Math.floor(loopElapsed / STROKE_DURATION_MS),
+			const { totalDurationMs } = getSequentialTimeline(strokes);
+			const loopElapsed = elapsed % totalDurationMs;
+			const { strokeIndex, progress } = getSequentialFrame(
+				strokes,
+				loopElapsed,
 			);
 
-			const strokeElapsed =
-				loopElapsed - strokeIndex * STROKE_DURATION_MS;
-			const progress = strokeElapsed / STROKE_DURATION_MS;
-
 			if (strokeIndex !== activeStrokeIndexRef.current) {
-				cacheCompletedTrace(strokes[activeStrokeIndexRef.current]);
+				if (strokeIndex === 0 && activeStrokeIndexRef.current !== 0) {
+					completedTraceCacheRef.current.clear();
+				} else {
+					cacheCompletedTrace(strokes[activeStrokeIndexRef.current]);
+				}
+
 				traceRef.current = [];
 				activeStrokeIndexRef.current = strokeIndex;
-			}
-
-			if (
-				strokeIndex === 0 &&
-				activeStrokeIndexRef.current !== 0 &&
-				progress < 0.02
-			) {
-				completedTraceCacheRef.current.clear();
 			}
 
 			drawSequentialFrame(strokeIndex, progress);
