@@ -1793,7 +1793,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-28 z-40 max-h-[calc(100%-8rem)] w-[calc(100vw-1.5rem)] max-w-80 overflow-y-auto transition-all duration-200 sm:w-80",
+							"absolute left-3 right-3 top-28 z-40 max-h-[calc(100%-8rem)] overflow-y-auto transition-all duration-200 sm:left-auto sm:w-80",
 							isColorDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -1811,11 +1811,11 @@ function App() {
 								/>
 							</div>
 
-							<div className="grid grid-cols-10 gap-1.5">
+							<div className="grid grid-cols-8 gap-1.5 min-[430px]:grid-cols-10">
 								{MS_PAINT_COLORS.map(color => (
 									<button
 										key={color}
-										className="aspect-square rounded-md border-2 transition hover:scale-105"
+										className="aspect-square min-w-0 rounded-md border-2 transition hover:scale-105"
 										style={{
 											backgroundColor: color,
 											borderColor:
@@ -1830,51 +1830,58 @@ function App() {
 								))}
 							</div>
 
-							<div className="mt-4 grid grid-cols-[auto_1fr] items-center gap-3">
-								<label className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Spectrum
-								</label>
+							<div className="mt-4 space-y-3">
+								<label className="block min-w-0">
+									<span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Spectrum
+									</span>
 
-								<input
-									className="h-10 w-full cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 p-1"
-									type="color"
-									value={penColor}
-									onChange={event =>
-										changePenColor(event.target.value)
-									}
-									aria-label="Choose color from spectrum"
-								/>
-
-								<label className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Hex
-								</label>
-
-								<input
-									className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
-									value={colorHexDraft}
-									onChange={event => {
-										const nextValue = event.target.value;
-										setColorHexDraft(nextValue);
-
-										const normalized =
-											normalizeHexColor(nextValue);
-										if (normalized) {
-											changePenColor(normalized);
+									<input
+										className="block h-10 w-full min-w-0 max-w-full cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 p-1"
+										type="color"
+										value={penColor}
+										onChange={event =>
+											changePenColor(event.target.value)
 										}
-									}}
-									onBlur={() => setColorHexDraft(penColor)}
-									placeholder="#E84D3D"
-									spellCheck={false}
-								/>
+										aria-label="Choose color from spectrum"
+									/>
+								</label>
+
+								<label className="block min-w-0">
+									<span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Hex
+									</span>
+
+									<input
+										className="block w-full min-w-0 max-w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										value={colorHexDraft}
+										onChange={event => {
+											const nextValue =
+												event.target.value;
+											setColorHexDraft(nextValue);
+
+											const normalized =
+												normalizeHexColor(nextValue);
+											if (normalized) {
+												changePenColor(normalized);
+											}
+										}}
+										onBlur={() =>
+											setColorHexDraft(penColor)
+										}
+										placeholder="#E84D3D"
+										spellCheck={false}
+									/>
+								</label>
 							</div>
 
 							<div className="mt-3 grid grid-cols-3 gap-2">
-								<label className="block">
+								<label className="block min-w-0">
 									<span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
 										R
 									</span>
 									<input
-										className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										className="block w-full min-w-0 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
 										type="number"
 										min={0}
 										max={255}
@@ -1888,12 +1895,12 @@ function App() {
 									/>
 								</label>
 
-								<label className="block">
+								<label className="block min-w-0">
 									<span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
 										G
 									</span>
 									<input
-										className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										className="block w-full min-w-0 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
 										type="number"
 										min={0}
 										max={255}
@@ -1907,12 +1914,12 @@ function App() {
 									/>
 								</label>
 
-								<label className="block">
+								<label className="block min-w-0">
 									<span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
 										B
 									</span>
 									<input
-										className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
+										className="block w-full min-w-0 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-300"
 										type="number"
 										min={0}
 										max={255}
