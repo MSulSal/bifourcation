@@ -316,9 +316,6 @@ function createSoftLimiterCurve(samples = 2048) {
 export class DrawingSoundEngine {
 	private context: AudioContext | null = null;
 	private masterGain: GainNode | null = null;
-	private masterFilter: BiquadFilterNode | null = null;
-	private compressor: DynamicsCompressorNode | null = null;
-	private limiter: WaveShaperNode | null = null;
 	private states = new Map<string, StrokeSoundState>();
 	private frameCounter = 0;
 	private isRunning = false;
@@ -524,9 +521,6 @@ export class DrawingSoundEngine {
 
 		this.context = context;
 		this.masterGain = masterGain;
-		this.masterFilter = masterFilter;
-		this.compressor = compressor;
-		this.limiter = limiter;
 
 		return context;
 	}
