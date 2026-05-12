@@ -34,32 +34,107 @@ export type SonicStroke = {
 type BivectorView = "blade" | "disk" | "companion";
 type AnimationTraceMode = "sequential" | "simultaneous";
 
-type Voice = {
+type SuperpositionTermTarget = {
 	key: string;
-	view: BivectorView;
-	gain: GainNode;
-	pan: StereoPannerNode;
-	filter: BiquadFilterNode;
-	oscillators: OscillatorNode[];
-	stopping: boolean;
+	k: number;
+	magnitude: number;
+	phase: number;
+	harmonic: number;
 };
 
-type RotorTarget = {
-	key: string;
+type SuperpositionTermState = SuperpositionTermTarget & {
+	currentPhase: number;
+};
+
+type StrokeTarget = {
+	id: string;
 	view: BivectorView;
-	frequencyHz: number;
+	activity: number;
+	panBias: number;
+	noteOffset: number;
+	detail: number;
+	terms: SuperpositionTermTarget[];
+};
+
+type StrokeState = {
+	id: string;
+	view: BivectorView;
+	activity: number;
+	currentActivity: number;
+	panBias: number;
+	currentPanBias: number;
+	noteOffset: number;
+	detail: number;
+	currentDetail: number;
+	terms: SuperpositionTermState[];
+	lastSeenFrame: number;
+
+	previousX: number;
+	previousY: number;
+	hasPreviousPoint: boolean;
+	motionAccumulator: number;
+	cooldownSamples: number;
+
+	voicePhase: number;
+	targetFrequencyHz: number;
+	currentFrequencyHz: number;
+	targetLeft: number;
+	targetRight: number;
+	currentLeft: number;
+	currentRight: number;
+};
+
+type ResonatorState = {
+	y1: number;
+	y2: number;
+	coefficient: number;
+	decaySquared: number;
 	gain: number;
-	pan: number;
-	filterHz: number;
-	detuneCents: number;
 };
 
-const MAX_ACTIVE_VOICES = 18;
 const LOOP_SECONDS = 8;
-const MASTER_GAIN = 0.42;
+const MASTER_GAIN = 0.34;
+const PROCESSOR_BUFFER_SIZE = 4096;
+const TWO_PI = Math.PI * 2;
 
-const PENTATONIC_STEPS = [0, 2, 4, 7, 9];
-const BASE_NOTE_HZ = 130.8128;
+const MIDI_A0 = 21;
+const MIDI_C8 = 108;
+
+/*
+	One stroke/drawing = one instrument voice.
+
+	All visible rotors in that stroke are superposed first:
+
+		z(t) = Σ cₖ Rₖ(t)
+
+	Then that superposition drives a keyed instrument:
+
+		superposition position  -> note choice
+		superposition motion    -> strike timing / velocity
+		coefficient phases      -> shape of z(t)
+		visible rotor count     -> which rotors participate
+		bivector view           -> instrument body/timbre
+
+	Individual rotors do not each play separate notes. They combine first.
+	The combined field plays the instrument.
+*/
+const FUNDAMENTAL_BY_VIEW: Record<BivectorView, number> = {
+	blade: 65.4064, // C2
+	disk: 55, // A1
+	companion: 48.9994, // G1
+};
+
+const ROOT_MIDI_BY_VIEW: Record<BivectorView, number> = {
+	blade: 60, // C4
+	disk: 57, // A3
+	companion: 55, // G3
+};
+
+const SCALE_BY_VIEW: Record<BivectorView, number[]> = {
+	blade: [0, 2, 4, 7, 9], // bright pentatonic
+	disk: [0, 3, 5, 7, 10], // minor pentatonic / rain drum
+	companion: [0, 2, 5, 7, 9], // suspended shimmer
+};
 
 function clamp(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
@@ -69,6 +144,20 @@ function smoothstep(edge0: number, edge1: number, value: number) {
 	const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
 
 	return t * t * (3 - 2 * t);
+}
+
+function wrapPhase(phase: number) {
+	if (phase >= TWO_PI || phase <= -TWO_PI) {
+		return phase % TWO_PI;
+	}
+
+	return phase;
+}
+
+function normalizePositivePhase(phase: number) {
+	const wrapped = phase % TWO_PI;
+
+	return wrapped < 0 ? wrapped + TWO_PI : wrapped;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -203,21 +292,31 @@ function getRotorFrequency(term: SonicFourierTerm, index: number) {
 	return directFrequency ?? fallbackDftFrequency(index);
 }
 
-function rotorFrequencyToHz(rotorFrequency: number, phase: number) {
-	const absoluteFrequency = Math.abs(Math.round(rotorFrequency));
+function midiToFrequency(midi: number) {
+	return 440 * 2 ** ((midi - 69) / 12);
+}
 
-	if (absoluteFrequency === 0) return 0;
+function quantizeMidiToScale(rawMidi: number, view: BivectorView) {
+	const root = ROOT_MIDI_BY_VIEW[view];
+	const scale = SCALE_BY_VIEW[view];
 
-	const degree = absoluteFrequency % PENTATONIC_STEPS.length;
-	const octave = clamp(
-		Math.floor(absoluteFrequency / PENTATONIC_STEPS.length),
-		0,
-		3,
-	);
-	const phaseOctave = phase > Math.PI / 2 || phase < -Math.PI / 2 ? 1 : 0;
-	const semitones = PENTATONIC_STEPS[degree] + 12 * (octave + phaseOctave);
+	let bestMidi = root;
+	let bestDistance = Number.POSITIVE_INFINITY;
 
-	return BASE_NOTE_HZ * 2 ** (semitones / 12);
+	for (let midi = MIDI_A0; midi <= MIDI_C8; midi += 1) {
+		const interval = (((midi - root) % 12) + 12) % 12;
+
+		if (!scale.includes(interval)) continue;
+
+		const distance = Math.abs(midi - rawMidi);
+
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			bestMidi = midi;
+		}
+	}
+
+	return bestMidi;
 }
 
 function getStrokeWeight({
@@ -246,124 +345,65 @@ function getStrokeWeight({
 	return 1 - smoothstep(0.2, 1, wrappedDistance);
 }
 
-function createTargetKey({
-	strokeId,
-	termIndex,
-	rotorFrequency,
-	view,
-}: {
-	strokeId: string;
-	termIndex: number;
-	rotorFrequency: number;
-	view: BivectorView;
-}) {
-	return `${view}:${strokeId}:${termIndex}:${rotorFrequency}`;
-}
+function hashString(value: string) {
+	let hash = 2166136261;
 
-function buildRotorTargets({
-	strokes,
-	view,
-	traceMode,
-	visibleTermCount,
-	elapsedSeconds,
-}: {
-	strokes: readonly SonicStroke[];
-	view: BivectorView;
-	traceMode: AnimationTraceMode;
-	visibleTermCount: number;
-	elapsedSeconds: number;
-}): RotorTarget[] {
-	const termLimit = clamp(Math.round(visibleTermCount), 0, 256);
-
-	if (termLimit === 0) return [];
-
-	const rawTargets: Array<
-		RotorTarget & {
-			amplitude: number;
-			strokeWeight: number;
-		}
-	> = [];
-
-	for (const [strokeIndex, stroke] of strokes.entries()) {
-		const strokeWeight = getStrokeWeight({
-			strokeIndex,
-			strokeCount: strokes.length,
-			traceMode,
-			elapsedSeconds,
-		});
-
-		if (strokeWeight <= 0.001) continue;
-
-		const visibleTerms = stroke.terms.slice(0, termLimit);
-		const maxAmplitude = Math.max(
-			...visibleTerms.map(term => getAmplitude(term)),
-			0.000001,
-		);
-
-		for (const [termIndex, term] of visibleTerms.entries()) {
-			const rotorFrequency = getRotorFrequency(term, termIndex);
-
-			if (rotorFrequency === 0) continue;
-
-			const amplitude = getAmplitude(term);
-			if (amplitude <= 0.000001) continue;
-
-			const phase = getPhase(term);
-			const frequencyHz = rotorFrequencyToHz(rotorFrequency, phase);
-			if (frequencyHz <= 0) continue;
-
-			const normalizedAmplitude = clamp(amplitude / maxAmplitude, 0, 1);
-			const coefficient = getCoefficient(term);
-			const pan =
-				Math.sin(phase) * 0.46 +
-				Math.sign(rotorFrequency) * 0.16 +
-				clamp(coefficient.x, -1, 1) * 0.08;
-
-			const brightness = 800 + normalizedAmplitude * 2300;
-			const directionDetune = rotorFrequency < 0 ? -5 : 5;
-
-			rawTargets.push({
-				key: createTargetKey({
-					strokeId: stroke.id,
-					termIndex,
-					rotorFrequency,
-					view,
-				}),
-				view,
-				frequencyHz,
-				gain:
-					(0.018 + normalizedAmplitude * 0.044) *
-					strokeWeight *
-					Math.sqrt(normalizedAmplitude),
-				pan: clamp(pan, -0.88, 0.88),
-				filterHz: brightness,
-				detuneCents: directionDetune + Math.sin(phase) * 5,
-				amplitude,
-				strokeWeight,
-			});
-		}
+	for (let index = 0; index < value.length; index += 1) {
+		hash ^= value.charCodeAt(index);
+		hash = Math.imul(hash, 16777619);
 	}
 
-	rawTargets.sort(
-		(a, b) => b.amplitude * b.strokeWeight - a.amplitude * a.strokeWeight,
-	);
+	return hash >>> 0;
+}
 
-	const dominantTargets = rawTargets.slice(0, MAX_ACTIVE_VOICES);
-	const totalGain = dominantTargets.reduce(
-		(total, target) => total + target.gain,
-		0,
-	);
-	const gainScale = totalGain > 0.5 ? 0.5 / totalGain : 1;
+function softClip(value: number) {
+	return Math.tanh(value);
+}
 
-	return dominantTargets.map(target => ({
-		key: target.key,
-		view: target.view,
-		frequencyHz: target.frequencyHz,
-		gain: target.gain * gainScale,
-		pan: target.pan,
-		filterHz: target.filterHz,
-		detuneCents: target.detuneCents,
-	}));
+function createResonators(
+	sampleRate: number,
+	view: BivectorView,
+	side: "left" | "right",
+) {
+	const stereoOffset = side === "left" ? 0.997 : 1.003;
+
+	const frequencies =
+		view === "blade"
+			? [261.6256, 329.6276, 392.0, 523.2511, 659.2551]
+			: view === "disk"
+				? [174.6141, 220.0, 261.6256, 329.6276, 391.9954]
+				: [146.8324, 196.0, 293.6648, 391.9954, 587.3295];
+
+	const decay = view === "blade" ? 0.9925 : view === "disk" ? 0.994 : 0.9945;
+	const gain = view === "blade" ? 0.0036 : view === "disk" ? 0.0048 : 0.0044;
+
+	return frequencies.map(frequency => {
+		const angle = TWO_PI * ((frequency * stereoOffset) / sampleRate);
+
+		return {
+			y1: 0,
+			y2: 0,
+			coefficient: 2 * decay * Math.cos(angle),
+			decaySquared: decay * decay,
+			gain,
+		};
+	});
+}
+
+function processResonator(input: number, resonator: ResonatorState) {
+	const next =
+		input * resonator.gain +
+		resonator.coefficient * resonator.y1 -
+		resonator.decaySquared * resonator.y2;
+
+	resonator.y2 = resonator.y1;
+	resonator.y1 = next;
+
+	return next;
+}
+
+function createDelayBuffer(sampleRate: number, seconds: number) {
+	return new Float32Array(Math.max(1, Math.round(sampleRate * seconds)));
 }
 
 function createAudioContext() {
@@ -382,12 +422,180 @@ function createAudioContext() {
 	return new AudioContextCtor();
 }
 
+function buildStrokeTargets({
+	strokes,
+	view,
+	traceMode,
+	visibleTermCount,
+	elapsedSeconds,
+}: {
+	strokes: readonly SonicStroke[];
+	view: BivectorView;
+	traceMode: AnimationTraceMode;
+	visibleTermCount: number;
+	elapsedSeconds: number;
+}): StrokeTarget[] {
+	const termLimit = clamp(Math.round(visibleTermCount), 0, 256);
+
+	if (termLimit === 0) return [];
+
+	return strokes.flatMap((stroke, strokeIndex) => {
+		const activity = getStrokeWeight({
+			strokeIndex,
+			strokeCount: strokes.length,
+			traceMode,
+			elapsedSeconds,
+		});
+
+		if (activity <= 0.0001) return [];
+
+		const visibleTerms = stroke.terms.slice(0, termLimit);
+
+		if (visibleTerms.length === 0) return [];
+
+		const usableTerms = visibleTerms
+			.map((term, termIndex) => {
+				const k = Math.round(getRotorFrequency(term, termIndex));
+				const amplitude = getAmplitude(term);
+				const harmonic = Math.abs(k);
+
+				return {
+					key: `${termIndex}:${k}`,
+					k,
+					amplitude,
+					phase: normalizePositivePhase(getPhase(term)),
+					harmonic,
+				};
+			})
+			.filter(term => term.amplitude > 0.000001);
+
+		if (usableTerms.length === 0) return [];
+
+		const amplitudeSum = usableTerms.reduce(
+			(total, term) => total + term.amplitude,
+			0,
+		);
+
+		if (amplitudeSum <= 0.000001) return [];
+
+		const weightedDetail =
+			usableTerms.reduce(
+				(total, term) => total + term.amplitude * term.harmonic,
+				0,
+			) / amplitudeSum;
+
+		const hash = hashString(`${stroke.id}:${stroke.color}`);
+		const panBias = ((hash % 2000) / 1000 - 1) * 0.24;
+		const noteOffset = Math.floor((hash / 2000) % 7) - 3;
+
+		return [
+			{
+				id: stroke.id,
+				view,
+				activity,
+				panBias,
+				noteOffset,
+				detail: clamp(weightedDetail / 64, 0, 1),
+				terms: usableTerms.map(term => ({
+					key: term.key,
+					k: term.k,
+					magnitude: term.amplitude / amplitudeSum,
+					phase: term.phase,
+					harmonic: term.harmonic,
+				})),
+			},
+		];
+	});
+}
+
+function mergeTerms(
+	existingTerms: SuperpositionTermState[],
+	nextTerms: SuperpositionTermTarget[],
+) {
+	const existingByKey = new Map(
+		existingTerms.map(term => [term.key, term] as const),
+	);
+
+	return nextTerms.map(term => {
+		const existing = existingByKey.get(term.key);
+
+		return {
+			...term,
+			currentPhase: existing?.currentPhase ?? term.phase,
+		};
+	});
+}
+
+function advanceSuperposition(
+	state: StrokeState,
+	sampleRate: number,
+): { x: number; y: number } {
+	let x = 0;
+	let y = 0;
+
+	for (const term of state.terms) {
+		term.currentPhase = wrapPhase(
+			term.currentPhase + (TWO_PI * term.k) / LOOP_SECONDS / sampleRate,
+		);
+
+		x += term.magnitude * Math.cos(term.currentPhase);
+		y += term.magnitude * Math.sin(term.currentPhase);
+	}
+
+	return { x, y };
+}
+
+function superpositionToMidi({
+	x,
+	y,
+	speed,
+	state,
+}: {
+	x: number;
+	y: number;
+	speed: number;
+	state: StrokeState;
+}) {
+	const angle = normalizePositivePhase(Math.atan2(y, x));
+	const angle01 = angle / TWO_PI;
+	const radius = clamp(Math.hypot(x, y), 0, 1);
+	const speedLift = clamp(Math.sqrt(speed) * 2.6, 0, 10);
+
+	const root = ROOT_MIDI_BY_VIEW[state.view];
+	const span = state.view === "blade" ? 26 : state.view === "disk" ? 22 : 25;
+
+	const rawMidi =
+		root +
+		(angle01 - 0.5) * span +
+		radius * 13 +
+		speedLift +
+		state.noteOffset;
+
+	return quantizeMidiToScale(clamp(rawMidi, MIDI_A0, MIDI_C8), state.view);
+}
+
 export class DrawingSoundEngine {
 	private context: AudioContext | null = null;
 	private masterGain: GainNode | null = null;
 	private compressor: DynamicsCompressorNode | null = null;
-	private voices = new Map<string, Voice>();
+	private processor: ScriptProcessorNode | null = null;
+
+	private strokeStates = new Map<string, StrokeState>();
+
 	private clockStartSeconds: number | null = null;
+	private isRunning = false;
+	private frameCounter = 0;
+	private currentView: BivectorView = "disk";
+
+	private bodyLeft = 0;
+	private bodyRight = 0;
+
+	private delayLeft: Float32Array | null = null;
+	private delayRight: Float32Array | null = null;
+	private delayIndex = 0;
+
+	private resonatorsLeft: ResonatorState[] = [];
+	private resonatorsRight: ResonatorState[] = [];
 
 	async enable() {
 		const context = this.ensureContext();
@@ -403,6 +611,8 @@ export class DrawingSoundEngine {
 		if (context.state === "suspended") {
 			await context.resume();
 		}
+
+		this.isRunning = true;
 
 		if (this.clockStartSeconds === null) {
 			this.clockStartSeconds = context.currentTime;
@@ -422,20 +632,32 @@ export class DrawingSoundEngine {
 		const context = this.context;
 		if (!context) return;
 
+		this.isRunning = false;
+
 		if (this.masterGain) {
 			this.masterGain.gain.cancelScheduledValues(context.currentTime);
-			this.masterGain.gain.setTargetAtTime(0, context.currentTime, 0.04);
+			this.masterGain.gain.setTargetAtTime(0, context.currentTime, 0.05);
 		}
 
-		for (const voice of this.voices.values()) {
-			this.stopVoice(voice, context.currentTime);
+		for (const state of this.strokeStates.values()) {
+			state.activity = 0;
+			state.targetLeft = 0;
+			state.targetRight = 0;
 		}
-
-		this.voices.clear();
 	}
 
 	resetClock() {
 		this.clockStartSeconds = this.context?.currentTime ?? null;
+
+		for (const state of this.strokeStates.values()) {
+			for (const term of state.terms) {
+				term.currentPhase = term.phase;
+			}
+
+			state.hasPreviousPoint = false;
+			state.motionAccumulator = 0;
+			state.cooldownSamples = 0;
+		}
 	}
 
 	tick(
@@ -451,9 +673,19 @@ export class DrawingSoundEngine {
 			this.clockStartSeconds = context.currentTime;
 		}
 
+		if (this.currentView !== bivectorView) {
+			this.currentView = bivectorView;
+			this.rebuildResonators(context.sampleRate, bivectorView);
+			this.bodyLeft = 0;
+			this.bodyRight = 0;
+			this.strokeStates.clear();
+		}
+
+		this.frameCounter += 1;
+
 		const elapsedSeconds = context.currentTime - this.clockStartSeconds;
 
-		const targets = buildRotorTargets({
+		const targets = buildStrokeTargets({
 			strokes,
 			view: bivectorView,
 			traceMode: animationTraceMode,
@@ -461,22 +693,60 @@ export class DrawingSoundEngine {
 			elapsedSeconds,
 		});
 
-		const activeKeys = new Set(targets.map(target => target.key));
-
 		for (const target of targets) {
-			const voice =
-				this.voices.get(target.key) ??
-				this.createVoice(target.key, target.view, context);
+			const existing = this.strokeStates.get(target.id);
 
-			this.voices.set(target.key, voice);
-			this.updateVoice(voice, target, context.currentTime);
+			if (existing) {
+				existing.view = target.view;
+				existing.activity = target.activity;
+				existing.panBias = target.panBias;
+				existing.noteOffset = target.noteOffset;
+				existing.detail = target.detail;
+				existing.terms = mergeTerms(existing.terms, target.terms);
+				existing.lastSeenFrame = this.frameCounter;
+				continue;
+			}
+
+			this.strokeStates.set(target.id, {
+				id: target.id,
+				view: target.view,
+				activity: target.activity,
+				currentActivity: 0,
+				panBias: target.panBias,
+				currentPanBias: target.panBias,
+				noteOffset: target.noteOffset,
+				detail: target.detail,
+				currentDetail: target.detail,
+				terms: target.terms.map(term => ({
+					...term,
+					currentPhase: term.phase,
+				})),
+				lastSeenFrame: this.frameCounter,
+
+				previousX: 0,
+				previousY: 0,
+				hasPreviousPoint: false,
+				motionAccumulator: 0,
+				cooldownSamples: 0,
+
+				voicePhase: target.terms[0]?.phase ?? 0,
+				targetFrequencyHz: midiToFrequency(
+					ROOT_MIDI_BY_VIEW[target.view],
+				),
+				currentFrequencyHz: midiToFrequency(
+					ROOT_MIDI_BY_VIEW[target.view],
+				),
+				targetLeft: 0,
+				targetRight: 0,
+				currentLeft: 0,
+				currentRight: 0,
+			});
 		}
 
-		for (const [key, voice] of this.voices.entries()) {
-			if (activeKeys.has(key)) continue;
-
-			this.stopVoice(voice, context.currentTime);
-			this.voices.delete(key);
+		for (const state of this.strokeStates.values()) {
+			if (state.lastSeenFrame !== this.frameCounter) {
+				state.activity = 0;
+			}
 		}
 	}
 
@@ -486,253 +756,304 @@ export class DrawingSoundEngine {
 		const context = createAudioContext();
 		const masterGain = context.createGain();
 		const compressor = context.createDynamicsCompressor();
+		const processor = context.createScriptProcessor(
+			PROCESSOR_BUFFER_SIZE,
+			0,
+			2,
+		);
 
 		masterGain.gain.value = 0;
 
-		compressor.threshold.value = -22;
-		compressor.knee.value = 24;
-		compressor.ratio.value = 5;
-		compressor.attack.value = 0.012;
-		compressor.release.value = 0.18;
+		compressor.threshold.value = -28;
+		compressor.knee.value = 30;
+		compressor.ratio.value = 2.8;
+		compressor.attack.value = 0.026;
+		compressor.release.value = 0.34;
 
+		processor.onaudioprocess = event => this.processAudio(event);
+
+		processor.connect(masterGain);
 		masterGain.connect(compressor);
 		compressor.connect(context.destination);
 
 		this.context = context;
 		this.masterGain = masterGain;
 		this.compressor = compressor;
+		this.processor = processor;
+
+		this.delayLeft = createDelayBuffer(context.sampleRate, 0.44);
+		this.delayRight = createDelayBuffer(context.sampleRate, 0.49);
+		this.rebuildResonators(context.sampleRate, this.currentView);
 
 		return context;
 	}
 
-	private createVoice(
-		key: string,
-		view: BivectorView,
-		context: AudioContext,
+	private rebuildResonators(sampleRate: number, view: BivectorView) {
+		this.resonatorsLeft = createResonators(sampleRate, view, "left");
+		this.resonatorsRight = createResonators(sampleRate, view, "right");
+	}
+
+	private strikeStroke(
+		state: StrokeState,
+		midi: number,
+		velocity: number,
+		x: number,
+		y: number,
 	) {
-		if (!this.masterGain) {
-			throw new Error("Audio graph was not initialized.");
-		}
+		const frequencyHz = midiToFrequency(midi);
+		const coefficientAngle = Math.atan2(y, x);
 
-		const gain = context.createGain();
-		const pan = context.createStereoPanner();
-		const filter = context.createBiquadFilter();
-
-		gain.gain.value = 0;
-		filter.type = view === "blade" ? "bandpass" : "lowpass";
-		filter.frequency.value = view === "companion" ? 1800 : 1400;
-		filter.Q.value = view === "blade" ? 1.4 : 0.72;
-
-		filter.connect(pan);
-		pan.connect(gain);
-		gain.connect(this.masterGain);
-
-		const oscillators = this.createOscillatorsForView(
-			view,
-			context,
-			filter,
+		const pan = clamp(
+			state.currentPanBias + Math.sin(coefficientAngle) * 0.28,
+			-0.82,
+			0.82,
 		);
 
-		for (const oscillator of oscillators) {
-			oscillator.start();
-		}
+		const leftGain = Math.sqrt((1 - pan) / 2);
+		const rightGain = Math.sqrt((1 + pan) / 2);
+		const viewGain =
+			state.view === "blade" ? 0.9 : state.view === "disk" ? 1 : 0.94;
 
-		return {
-			key,
-			view,
-			gain,
-			pan,
-			filter,
-			oscillators,
-			stopping: false,
-		};
+		state.targetFrequencyHz = frequencyHz;
+		state.voicePhase = coefficientAngle;
+
+		state.targetLeft = clamp(
+			state.targetLeft + velocity * leftGain * viewGain,
+			0,
+			1.1,
+		);
+		state.targetRight = clamp(
+			state.targetRight + velocity * rightGain * viewGain,
+			0,
+			1.1,
+		);
 	}
 
-	private createOscillatorsForView(
-		view: BivectorView,
-		context: AudioContext,
-		destination: AudioNode,
-	) {
-		if (view === "blade") {
-			const main = context.createOscillator();
-			const companion = context.createOscillator();
-			const mainGain = context.createGain();
-			const companionGain = context.createGain();
+	private processAudio(event: AudioProcessingEvent) {
+		const outputLeft = event.outputBuffer.getChannelData(0);
+		const outputRight = event.outputBuffer.getChannelData(1);
+		const sampleRate = event.outputBuffer.sampleRate;
 
-			main.type = "sine";
-			companion.type = "triangle";
-			mainGain.gain.value = 0.88;
-			companionGain.gain.value = 0.12;
-
-			main.connect(mainGain);
-			companion.connect(companionGain);
-			mainGain.connect(destination);
-			companionGain.connect(destination);
-
-			return [main, companion];
-		}
-
-		if (view === "disk") {
-			const main = context.createOscillator();
-			const body = context.createOscillator();
-			const mainGain = context.createGain();
-			const bodyGain = context.createGain();
-
-			main.type = "triangle";
-			body.type = "sine";
-			mainGain.gain.value = 0.72;
-			bodyGain.gain.value = 0.2;
-
-			main.connect(mainGain);
-			body.connect(bodyGain);
-			mainGain.connect(destination);
-			bodyGain.connect(destination);
-
-			return [main, body];
-		}
-
-		const left = context.createOscillator();
-		const right = context.createOscillator();
-		const center = context.createOscillator();
-		const leftGain = context.createGain();
-		const rightGain = context.createGain();
-		const centerGain = context.createGain();
-
-		left.type = "sine";
-		right.type = "sine";
-		center.type = "triangle";
-
-		leftGain.gain.value = 0.38;
-		rightGain.gain.value = 0.38;
-		centerGain.gain.value = 0.16;
-
-		left.connect(leftGain);
-		right.connect(rightGain);
-		center.connect(centerGain);
-
-		leftGain.connect(destination);
-		rightGain.connect(destination);
-		centerGain.connect(destination);
-
-		return [left, right, center];
-	}
-
-	private updateVoice(voice: Voice, target: RotorTarget, now: number) {
-		voice.stopping = false;
-
-		voice.gain.gain.cancelScheduledValues(now);
-		voice.gain.gain.setTargetAtTime(target.gain, now, 0.08);
-
-		voice.pan.pan.cancelScheduledValues(now);
-		voice.pan.pan.setTargetAtTime(target.pan, now, 0.12);
-
-		voice.filter.frequency.cancelScheduledValues(now);
-		voice.filter.frequency.setTargetAtTime(target.filterHz, now, 0.12);
-
-		if (voice.view === "blade") {
-			voice.oscillators[0]?.frequency.setTargetAtTime(
-				target.frequencyHz,
-				now,
-				0.08,
-			);
-			voice.oscillators[1]?.frequency.setTargetAtTime(
-				target.frequencyHz * 2,
-				now,
-				0.08,
-			);
-
-			voice.oscillators[0]?.detune.setTargetAtTime(
-				target.detuneCents,
-				now,
-				0.1,
-			);
-			voice.oscillators[1]?.detune.setTargetAtTime(
-				target.detuneCents * 0.4,
-				now,
-				0.1,
-			);
-
+		if (!this.isRunning || this.strokeStates.size === 0) {
+			outputLeft.fill(0);
+			outputRight.fill(0);
 			return;
 		}
 
-		if (voice.view === "disk") {
-			voice.oscillators[0]?.frequency.setTargetAtTime(
-				target.frequencyHz,
-				now,
-				0.1,
-			);
-			voice.oscillators[1]?.frequency.setTargetAtTime(
-				target.frequencyHz / 2,
-				now,
-				0.1,
-			);
+		const view = this.currentView;
 
-			voice.oscillators[0]?.detune.setTargetAtTime(
-				target.detuneCents * 0.5,
-				now,
-				0.1,
-			);
-			voice.oscillators[1]?.detune.setTargetAtTime(0, now, 0.1);
+		const attackSeconds =
+			view === "blade" ? 0.006 : view === "disk" ? 0.014 : 0.01;
+		const decaySeconds =
+			view === "blade" ? 0.68 : view === "disk" ? 1.28 : 1.06;
+		const attackAlpha = 1 - Math.exp(-1 / (sampleRate * attackSeconds));
+		const targetDecay = Math.exp(-1 / (sampleRate * decaySeconds));
 
-			return;
-		}
+		const lowpassCutoff =
+			view === "blade" ? 3600 : view === "disk" ? 2300 : 2800;
+		const lowpassAlpha =
+			1 - Math.exp((-TWO_PI * lowpassCutoff) / sampleRate);
 
-		voice.oscillators[0]?.frequency.setTargetAtTime(
-			target.frequencyHz,
-			now,
-			0.1,
-		);
-		voice.oscillators[1]?.frequency.setTargetAtTime(
-			target.frequencyHz,
-			now,
-			0.1,
-		);
-		voice.oscillators[2]?.frequency.setTargetAtTime(
-			target.frequencyHz * 1.5,
-			now,
-			0.1,
-		);
+		const delayLeft = this.delayLeft;
+		const delayRight = this.delayRight;
+		const hasDelay = delayLeft !== null && delayRight !== null;
+		const delayWet =
+			view === "blade" ? 0.055 : view === "disk" ? 0.09 : 0.11;
+		const delayFeedback =
+			view === "blade" ? 0.09 : view === "disk" ? 0.15 : 0.17;
 
-		voice.oscillators[0]?.detune.setTargetAtTime(
-			target.detuneCents - 7,
-			now,
-			0.1,
-		);
-		voice.oscillators[1]?.detune.setTargetAtTime(
-			target.detuneCents + 7,
-			now,
-			0.1,
-		);
-		voice.oscillators[2]?.detune.setTargetAtTime(
-			target.detuneCents * 0.25,
-			now,
-			0.1,
-		);
-	}
+		const dryMix = view === "blade" ? 0.36 : view === "disk" ? 0.22 : 0.27;
+		const resonatorWet =
+			view === "blade" ? 0.58 : view === "disk" ? 0.86 : 0.74;
 
-	private stopVoice(voice: Voice, now: number) {
-		if (voice.stopping) return;
+		const strikeDistance =
+			view === "blade" ? 0.085 : view === "disk" ? 0.13 : 0.105;
+		const minStrikeGapSamples =
+			view === "blade"
+				? Math.round(sampleRate * 0.07)
+				: view === "disk"
+					? Math.round(sampleRate * 0.12)
+					: Math.round(sampleRate * 0.09);
 
-		voice.stopping = true;
-		voice.gain.gain.cancelScheduledValues(now);
-		voice.gain.gain.setTargetAtTime(0, now, 0.04);
+		for (
+			let sampleIndex = 0;
+			sampleIndex < outputLeft.length;
+			sampleIndex += 1
+		) {
+			let keysLeft = 0;
+			let keysRight = 0;
 
-		window.setTimeout(() => {
-			for (const oscillator of voice.oscillators) {
-				try {
-					oscillator.stop();
-				} catch {
-					// Oscillator may already be stopped.
+			for (const [id, state] of this.strokeStates.entries()) {
+				state.currentActivity +=
+					(state.activity - state.currentActivity) * 0.0016;
+				state.currentPanBias +=
+					(state.panBias - state.currentPanBias) * 0.0015;
+				state.currentDetail +=
+					(state.detail - state.currentDetail) * 0.0015;
+
+				if (
+					state.currentActivity <= 0.00001 &&
+					state.activity === 0 &&
+					state.currentLeft < 0.000003 &&
+					state.currentRight < 0.000003
+				) {
+					this.strokeStates.delete(id);
+					continue;
 				}
+
+				const point = advanceSuperposition(state, sampleRate);
+				let speed = 0;
+
+				if (state.hasPreviousPoint) {
+					speed =
+						Math.hypot(
+							point.x - state.previousX,
+							point.y - state.previousY,
+						) * sampleRate;
+				} else {
+					state.hasPreviousPoint = true;
+				}
+
+				state.previousX = point.x;
+				state.previousY = point.y;
+
+				const activeSpeed = speed * state.currentActivity;
+				state.motionAccumulator += activeSpeed / sampleRate;
+
+				if (state.cooldownSamples > 0) {
+					state.cooldownSamples -= 1;
+				}
+
+				if (
+					state.motionAccumulator >= strikeDistance &&
+					state.cooldownSamples <= 0 &&
+					state.currentActivity > 0.01
+				) {
+					state.motionAccumulator %= strikeDistance;
+
+					const midi = superpositionToMidi({
+						x: point.x,
+						y: point.y,
+						speed: activeSpeed,
+						state,
+					});
+
+					const velocity = clamp(
+						0.035 +
+							Math.sqrt(activeSpeed) * 0.065 +
+							state.currentDetail * 0.035,
+						0.025,
+						0.38,
+					);
+
+					this.strikeStroke(state, midi, velocity, point.x, point.y);
+					state.cooldownSamples = minStrikeGapSamples;
+				}
+
+				state.targetLeft *= targetDecay;
+				state.targetRight *= targetDecay;
+
+				state.currentLeft +=
+					(state.targetLeft - state.currentLeft) * attackAlpha;
+				state.currentRight +=
+					(state.targetRight - state.currentRight) * attackAlpha;
+
+				state.currentFrequencyHz +=
+					(state.targetFrequencyHz - state.currentFrequencyHz) *
+					0.002;
+
+				state.voicePhase = wrapPhase(
+					state.voicePhase +
+						(TWO_PI * state.currentFrequencyHz) / sampleRate,
+				);
+
+				const phase = state.voicePhase;
+				const brightness = clamp(state.currentDetail, 0, 1);
+
+				let toneLeft = 0;
+				let toneRight = 0;
+
+				if (state.view === "blade") {
+					const glassPartial =
+						Math.sin(phase * 2.01 + 0.2) * 0.085 * brightness;
+
+					toneLeft = Math.sin(phase) * 0.92 + glassPartial;
+					toneRight =
+						Math.sin(phase + 0.012) * 0.92 + glassPartial * 0.94;
+				} else if (state.view === "disk") {
+					const bodyPartial =
+						Math.sin(phase * 2 + 0.12) * 0.04 * brightness;
+					const lowBody = Math.sin(phase * 0.5) * 0.055;
+
+					toneLeft = Math.sin(phase) * 0.88 + bodyPartial + lowBody;
+					toneRight =
+						Math.sin(phase + 0.008) * 0.88 +
+						bodyPartial * 0.94 +
+						lowBody;
+				} else {
+					const shimmer =
+						Math.sin(phase * 2.003 + 0.35) * 0.052 * brightness;
+
+					toneLeft =
+						Math.sin(phase - 0.018) * 0.84 +
+						Math.sin(phase * 1.5) * 0.032 +
+						shimmer;
+					toneRight =
+						Math.sin(phase + 0.018) * 0.84 +
+						Math.sin(phase * 1.5 + 0.08) * 0.032 +
+						shimmer * 0.9;
+				}
+
+				keysLeft += state.currentLeft * toneLeft;
+				keysRight += state.currentRight * toneRight;
 			}
 
-			try {
-				voice.gain.disconnect();
-				voice.pan.disconnect();
-				voice.filter.disconnect();
-			} catch {
-				// Nodes may already be disconnected.
+			keysLeft = softClip(keysLeft * 1.08);
+			keysRight = softClip(keysRight * 1.08);
+
+			this.bodyLeft += (keysLeft - this.bodyLeft) * lowpassAlpha;
+			this.bodyRight += (keysRight - this.bodyRight) * lowpassAlpha;
+
+			let resonantLeft = 0;
+			let resonantRight = 0;
+
+			for (const resonator of this.resonatorsLeft) {
+				resonantLeft += processResonator(this.bodyLeft, resonator);
 			}
-		}, 220);
+
+			for (const resonator of this.resonatorsRight) {
+				resonantRight += processResonator(this.bodyRight, resonator);
+			}
+
+			let delayedLeft = 0;
+			let delayedRight = 0;
+
+			if (hasDelay && delayLeft && delayRight) {
+				delayedLeft = delayLeft[this.delayIndex] ?? 0;
+				delayedRight = delayRight[this.delayIndex] ?? 0;
+
+				delayLeft[this.delayIndex] =
+					(this.bodyLeft + resonantLeft * 0.8) * 0.18 +
+					delayedRight * delayFeedback;
+				delayRight[this.delayIndex] =
+					(this.bodyRight + resonantRight * 0.8) * 0.18 +
+					delayedLeft * delayFeedback;
+
+				this.delayIndex = (this.delayIndex + 1) % delayLeft.length;
+			}
+
+			const wetLeft =
+				keysLeft * dryMix +
+				resonantLeft * resonatorWet +
+				delayedLeft * delayWet;
+
+			const wetRight =
+				keysRight * dryMix +
+				resonantRight * resonatorWet +
+				delayedRight * delayWet;
+
+			outputLeft[sampleIndex] = softClip(wetLeft);
+			outputRight[sampleIndex] = softClip(wetRight);
+		}
 	}
 }
