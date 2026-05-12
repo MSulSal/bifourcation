@@ -21,17 +21,22 @@ Fourier terms advanced by rotors in the e₁e₂ plane.
 ## What it does
 
 - Draw freehand strokes on a canvas.
-- Import images and trace their edges into drawable strokes.
+- Add geometric shape strokes with placement, scaling, and rotation.
+- Import images and trace their visible edges into drawable strokes.
+- Undo and redo drawing actions.
 - Choose stroke color and pen width.
-- Convert each stroke into an evenly sampled path.
+- Convert every stroke into an evenly sampled path.
 - Compute Fourier terms for each stroke.
-- Animate each stroke in order.
+- Animate strokes as rotor-driven Fourier reconstructions.
+- Choose between Sequential and Together animation modes.
+- Use path-length-based animation timing so equal traced distance takes equal time.
 - Preserve completed stroke reconstructions while later strokes animate.
 - Visualize Fourier components as rotor-driven disks, oriented blades, or companion vectors.
 - Show tiny rotor labels so the animation keeps pointing back to the math.
 - Generate optional path-driven sound from the drawing.
-- Persist user preferences across refreshes.
-- Export/share snapshots of the current reconstruction.
+- Sync sound timing with the selected animation mode.
+- Persist lightweight user preferences across refreshes.
+- Export or share snapshots of the current reconstruction.
 
 ## Why this exists
 
@@ -304,6 +309,193 @@ e₁e₂ = the oriented drawing plane
 
 Bifourcation does not use the even subalgebra because vectors cannot be rotated directly. It uses this scalar-plus-bivector phase space because Fourier coefficients naturally want complex-like phase behavior, and geometric algebra lets that phase be interpreted as the drawing plane itself.
 
+## Drawing inputs
+
+Every source of geometry becomes the same internal object:
+
+```ts
+type Stroke = {
+	color: string;
+	width: number;
+	points: Point[];
+};
+```
+
+That decision keeps the app coherent.
+
+```txt
+freehand drawing
+shape placement
+image tracing
+→ Stroke[]
+→ resampled path
+→ Fourier terms
+→ rotor animation
+```
+
+The Fourier system does not need to know where a stroke came from.
+
+### Freehand strokes
+
+Freehand drawing records ordered pointer positions directly on the canvas. Each stroke keeps its own color and width, and those values are used again during animation.
+
+### Shape tools
+
+The gear drawer includes shape tools.
+
+The current shape tools are:
+
+```txt
+line
+circle
+rectangle
+triangle
+star
+spiral
+sine wave
+```
+
+A shape tool is not inserted at a fixed default location. Instead:
+
+```txt
+select a shape
+press on the canvas to anchor it
+drag to scale and rotate it
+release to finalize it
+```
+
+Once finalized, the shape becomes a normal stroke. It enters the same Fourier pipeline as hand-drawn strokes and image-traced contours.
+
+### Image tracing
+
+Bifourcation can import an image and turn its visible edges into strokes.
+
+This is not AI image recognition. It does not try to understand the image semantically. It uses a classic computer-vision pipeline entirely in the browser.
+
+The high-contrast image pipeline is:
+
+```txt
+uploaded image
+→ hidden canvas
+→ grayscale pixels
+→ light blur
+→ threshold / foreground mask
+→ boundary extraction
+→ contour tracing
+→ simplified paths
+→ Stroke[]
+→ Fourier / rotor reconstruction
+```
+
+Sobel-style edge detection remains useful as a fallback, but for high-contrast logos, icons, and silhouettes, threshold-based foreground boundary extraction usually gives cleaner contours.
+
+After import, hand-drawn strokes, shape strokes, and image-traced strokes go through the same pipeline.
+
+### Best image types
+
+Image tracing works best with:
+
+- icons
+- logos
+- sketches
+- line art
+- high-contrast images
+- simple photos with clear silhouettes
+
+It works less well with:
+
+- low-contrast photos
+- noisy images
+- dense textures
+- images where the subject blends into the background
+
+The goal is not perfect photo vectorization. The goal is to turn an image into a drawable set of paths that can be decomposed through the same Fourier/geometric-algebra system.
+
+## History
+
+Bifourcation includes undo and redo for committed drawing actions.
+
+History applies to:
+
+```txt
+freehand strokes
+shape strokes
+image imports
+clear canvas
+```
+
+Keyboard shortcuts:
+
+```txt
+Cmd/Ctrl+Z
+  undo
+
+Cmd/Ctrl+Shift+Z
+  redo
+
+Cmd/Ctrl+Y
+  redo
+```
+
+Undo and redo reset animation-side state so stale Fourier traces do not remain visible after the underlying drawing has changed.
+
+## Animation modes
+
+Bifourcation has two animation modes.
+
+### Sequential
+
+Sequential mode traces strokes in drawing order.
+
+```txt
+stroke 1 animates
+stroke 1 remains as a Fourier trace
+stroke 2 animates
+stroke 1 and stroke 2 remain as Fourier traces
+stroke 3 animates
+...
+```
+
+Completed strokes are not replaced by raw input strokes. They remain as the Fourier-drawn traces that were actually generated during animation.
+
+### Together
+
+Together mode starts every stroke at the same time.
+
+```txt
+all strokes begin together
+short strokes finish first
+long strokes continue
+the loop finishes when the longest stroke finishes
+```
+
+This mode is useful for seeing the entire drawing emerge as one synchronized Fourier system instead of as a stroke-by-stroke reconstruction.
+
+## Length-based animation timing
+
+Animation timing is based on path length.
+
+The rule is:
+
+```txt
+same traced distance → same time
+```
+
+So the app does not force every stroke to take the same amount of time.
+
+Instead:
+
+```txt
+short stroke → shorter duration
+long stroke  → longer duration
+```
+
+In Sequential mode, each stroke gets a duration proportional to its own path length.
+
+In Together mode, each stroke still uses its own path-length-based duration, but all strokes start at the same time. The full Together loop lasts as long as the longest stroke.
+
+This makes the animation feel more like drawing speed than like a fixed slideshow of strokes.
+
 ## Visual modes
 
 During animation, Bifourcation can show each rotor-driven Fourier component in three geometrically consistent ways.
@@ -474,61 +666,6 @@ An equivalent expanded label would be:
 cₖe^(e₁e₂ · 2πkt)
 ```
 
-## Image tracing
-
-Bifourcation can import an image and turn its visible edges into strokes.
-
-This is not AI image recognition. It does not try to understand the image semantically. It uses a classic computer-vision pipeline entirely in the browser.
-
-The high-contrast image pipeline is:
-
-```txt
-uploaded image
-→ hidden canvas
-→ grayscale pixels
-→ light blur
-→ threshold / foreground mask
-→ boundary extraction
-→ contour tracing
-→ simplified paths
-→ Stroke[]
-→ Fourier / rotor reconstruction
-```
-
-Sobel-style edge detection remains useful as a fallback, but for high-contrast logos, icons, and silhouettes, threshold-based foreground boundary extraction usually gives cleaner contours.
-
-The imported image is converted into the same stroke format as a hand-drawn path:
-
-```ts
-type Stroke = {
-	color: string;
-	width: number;
-	points: Point[];
-};
-```
-
-After import, hand-drawn strokes and image-traced strokes go through the same pipeline.
-
-### Best image types
-
-Image tracing works best with:
-
-- icons
-- logos
-- sketches
-- line art
-- high-contrast images
-- simple photos with clear silhouettes
-
-It works less well with:
-
-- low-contrast photos
-- noisy images
-- dense textures
-- images where the subject blends into the background
-
-The goal is not perfect photo vectorization. The goal is to turn an image into a drawable set of paths that can be decomposed through the same Fourier/geometric-algebra system.
-
 ## Sound
 
 Bifourcation includes an optional Web Audio sound engine.
@@ -544,9 +681,21 @@ path curvature → density / sparkle
 Fourier amplitude → loudness
 Fourier frequency sign → subtle stereo/orientation cue
 current view → instrument character
+animation mode → timing behavior
 ```
 
 Sound only plays while animation is active. Pausing animation stops the sound. Clearing the canvas stops and resets sound.
+
+The sound system follows the same animation timing idea as the visual reconstruction:
+
+```txt
+Sequential:
+  samples the active stroke according to its path-length-based duration
+
+Together:
+  samples multiple active strokes from the shared Together-mode clock
+  caps the number of simultaneous voices so the result stays musical
+```
 
 The current sound system is intentionally lightweight and browser-native. It uses the Web Audio API and does not depend on external audio files or libraries.
 
@@ -559,6 +708,7 @@ Currently persisted:
 - pen color
 - pen width
 - rotor/bivector view
+- animation trace mode
 - sound on/off preference
 
 Drawing data itself is not persisted. Refreshing the page keeps the user’s preferred tools, but it does not restore the canvas drawing.
@@ -574,6 +724,7 @@ Sound preference is remembered, but browser autoplay rules still apply. The app 
 - HTML Canvas
 - Web Audio API
 - Browser `localStorage`
+- pnpm
 
 No backend is required.
 
@@ -582,26 +733,45 @@ No backend is required.
 Install dependencies:
 
 ```bash
-npm install
+pnpm install
 ```
 
 Start the dev server:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Build for production:
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Preview the production build:
 
 ```bash
-npm run preview
+pnpm preview
 ```
+
+## Package manager note
+
+This project uses pnpm.
+
+Keep:
+
+```txt
+pnpm-lock.yaml
+```
+
+Do not commit:
+
+```txt
+package-lock.json
+yarn.lock
+```
+
+A mixed lockfile setup can confuse deployment platforms and cause the wrong package manager to be inferred.
 
 ## Project structure
 
@@ -613,6 +783,7 @@ src/
   components/
     DrawingCanvas.tsx
     RotorCanvas.tsx
+    ShapePlacementCanvas.tsx
 
   image/
     edgeTracing.ts
@@ -622,6 +793,7 @@ src/
     evenSubalgebra.ts
     fourier.ts
     path.ts
+    shapes.ts
 
   types/
     geometry.ts
@@ -640,6 +812,7 @@ The app’s core data flow is:
 
 ```txt
 raw pointer stroke
+or placed shape stroke
 or traced image contour
 → ordered path points
 → evenly resampled path
@@ -664,72 +837,33 @@ The visual stroke and the mathematical stroke are the same object. This lets the
 
 ### 2. Resampling
 
-Pointer events and traced contours are uneven. Slow hand movement creates many close samples; fast movement creates sparse samples. Edge-traced contours can also have irregular point spacing.
+Pointer events, shape generators, and traced contours can have uneven spacing.
 
 `src/math/path.ts` converts raw points into evenly spaced points along the path’s arc length.
 
-This matters because Fourier reconstruction expects a clean ordered signal. It also matters for self-crossing strokes: the app follows the order in which the stroke was drawn or traced, not whichever nearby point happens to be geometrically closest.
+This matters because Fourier reconstruction expects a clean ordered signal.
 
-### 3. Clifford algebra
+### 3. Geometric algebra conversion
 
-`src/math/clifford.ts` defines the basis blades:
-
-```txt
-1
-e₁
-e₂
-e₁e₂
-```
-
-The geometric product is derived from basis-blade multiplication rules. The important facts are:
+A point is first interpreted as a vector:
 
 ```txt
-e₁² = 1
-e₂² = 1
-e₁e₂ = -e₂e₁
-(e₁e₂)² = -1
+x e₁ + y e₂
 ```
 
-The inner and outer products are derived from grade projections of the geometric product.
-
-For vectors:
+Then it is mapped into the even subalgebra:
 
 ```txt
-ab = a · b + a ∧ b
+x + y e₁e₂
 ```
 
-In the app’s naming, the wedge/outer product is represented as `outerProduct`.
+This is the geometric-algebra version of the usual complex signal.
 
-### 4. Even subalgebra
+### 4. Fourier transform
 
-`src/math/evenSubalgebra.ts` derives the Fourier-friendly scalar-plus-bivector representation.
+The app computes a direct DFT over the even-subalgebra signal.
 
-A point starts as a real vector:
-
-```txt
-v = x e₁ + y e₂
-```
-
-Then it can be converted into the even subalgebra:
-
-```txt
-e₁v = x + y e₁e₂
-```
-
-The rotor / phase exponential is:
-
-```txt
-R(θ) = e^(e₁e₂θ)
-     = cos(θ) + e₁e₂ sin(θ)
-```
-
-This replaces the usual complex exponential with a geometric-algebra exponential generated by the drawing plane.
-
-### 5. Fourier transform
-
-`src/math/fourier.ts` computes DFT terms over the drawing signal.
-
-Each Fourier term stores:
+Each term stores:
 
 ```ts
 type FourierTerm = {
@@ -740,155 +874,125 @@ type FourierTerm = {
 };
 ```
 
-The reconstruction evaluates terms as rotor-driven multivectors and converts the result back into a vector for canvas drawing.
+The terms are sorted by amplitude so the largest broad components appear first in the rotor chain.
 
-Conceptually:
+### 5. Rotor evaluation
 
-```txt
-coefficient cₖ
-→ phase rotor Rₖ(t) = e^(e₁e₂ · 2πkt)
-→ rotating term cₖRₖ(t)
-→ sum all terms
-→ reconstructed point
-```
-
-### 6. Image tracing
-
-`src/image/edgeTracing.ts` turns an uploaded image into strokes.
-
-The pipeline is intentionally simple and dependency-free:
+At animation progress `t`, each term is evaluated as:
 
 ```txt
-ImageData
-→ grayscale
-→ blur
-→ threshold / edge mask
-→ boundary pixels
-→ contour paths
-→ simplified Stroke[]
+cₖRₖ(t)
 ```
 
-The resulting strokes are appended to the canvas and treated like user-drawn strokes.
-
-### 7. Rotor visualization
-
-`src/components/RotorCanvas.tsx` renders the animated reconstruction.
-
-It receives Fourier terms, evaluates their state at the current animation progress, and draws each component according to the selected view:
+where:
 
 ```txt
-Disk       → rotationally symmetric equal-area disk glyph
-Blade      → oriented area generated by r and e₁e₂r
-Companion  → r and its e₁e₂-rotated companion
+Rₖ(t) = e^(e₁e₂ · 2πkt)
 ```
 
-It also draws small `cₖRₖ(t)` labels on early components to keep the rotor model visible.
+The terms are added head-to-tail. The endpoint of the chain is the reconstructed drawing point.
 
-### 8. Path-driven audio
+### 6. Open-stroke seam handling
 
-`src/audio/soundEngine.ts` turns the active animated stroke into sound.
+A normal DFT is periodic, so it assumes the last sample connects back to the first sample.
 
-The audio engine samples the current stroke progress and uses local path shape plus Fourier term data to shape the generated sound.
+That can create an artificial seam for open strokes.
+
+Bifourcation keeps the classic periodic DFT because that preserves the rotor-chain identity of the app. But visually, it avoids the final artificial return interval.
+
+The visible animation treats the stroke interval as:
 
 ```txt
-current path sample
-→ normalized x/y position
-→ tangent direction
-→ curvature
-→ Fourier term information
-→ view-specific sound behavior
+0 → (N - 1) / N
 ```
 
-## App controls
-
-### Bottom controls
-
-The bottom bar contains only primary actions:
-
-- Draw
-- Animate / Pause
-- Clear canvas
-
-### Floating controls
-
-The top-right drawer contains pen, image, and rotor-plane controls:
-
-- Color palette
-- Pen width
-- Image import
-- Rotor plane explanation
-- Bivector/rotor view toggle: Disk, Blade, Companion
-
-### Image import
-
-The image card lets users upload an image and trace it into strokes using classic browser-native image processing.
-
-Imported strokes use the current pen color and a capped version of the current pen width.
-
-### Sound control
-
-The speaker button toggles drawing sound.
-
-Sound only plays while animation is active. Pausing animation stops the sound. Clearing the canvas stops and resets sound.
-
-### Snapshot controls
-
-The camera button opens a small export menu:
-
-- Share snapshot
-- Download PNG
-
-Snapshots capture the canvas layers without including the UI controls. If the animation is running, taking a snapshot captures the current frame first, then pauses the app on that frame.
-
-## Design philosophy
-
-Bifourcation is intentionally not a generic Fourier demo.
-
-The goal is to make the algebra visible and audible:
+rather than:
 
 ```txt
-complex phase → rotor-driven Fourier components
-imaginary unit → oriented plane e₁e₂
-complex multiplication → geometric product / plane-phase action
-negative sign → reversed orientation
-circle-only visualization → disk, blade, and companion views
-image recognition → simple mechanical edge tracing
-raw sonification → path-driven musical drawing
+0 → 1
 ```
 
-The result should feel like a drawing app, a math visualization, an ambient instrument, and a small act of rebellion against hiding geometry behind notation.
+This does not turn the DFT into a non-periodic open-curve transform. It simply avoids intentionally drawing the final implied return-to-start segment.
 
-## Current limitations
+## UI overview
 
-- The DFT implementation is simple and direct, not FFT-optimized.
-- Image tracing uses a simple threshold / Sobel-style pipeline, not full Canny edge detection or advanced vectorization.
-- Image tracing works best on high-contrast images and may produce noisy contours on photos.
-- Animation export currently supports snapshots, not video or GIF.
-- Strokes are animated sequentially, not simultaneously.
-- Sound is generated live through the Web Audio API and is not currently exported with snapshots.
-- Preferences are persisted, but drawings are not currently saved.
-- The app uses the drawing plane only; higher-dimensional Clifford algebras are out of scope for the current version.
-
-## Possible next steps
-
-- Add video/GIF export.
-- Add animation speed controls.
-- Add term-count controls.
-- Add image tracing controls for threshold, contour count, and simplification.
-- Add sound controls for volume, density, and instrument character.
-- Add optional labels for `e₁`, `e₂`, and `e₁e₂`.
-- Add onboarding overlays explaining rotors, equal-area disks, blades, and companion vectors.
-- Add local save/load for drawings.
-- Add stroke editing or undo.
-
-## Name
-
-**Bifourcation** combines:
+Primary bottom controls:
 
 ```txt
-bivector
-Fourier
-bifurcation
+Draw
+Animate / Pause
+Clear canvas
 ```
 
-It is a Fourier reconstruction app that splits a drawing into oriented-plane rotor components.
+Floating canvas controls:
+
+```txt
+gear drawer
+sound toggle
+snapshot menu
+animation view selector
+```
+
+The gear drawer contains:
+
+```txt
+history controls
+animation mode selector
+shape tools
+color palette
+pen width
+image import
+rotor-plane explanation
+```
+
+The gear icon is used because the drawer is now a general settings and tool surface, not just a color drawer.
+
+## Snapshot behavior
+
+The snapshot button captures the current canvas layers into a PNG.
+
+If animation is playing, the app captures the current frame and then pauses.
+
+Snapshot options:
+
+```txt
+Share snapshot
+Download PNG
+```
+
+The share option uses the browser share sheet when available and falls back to PNG download when sharing files is not supported.
+
+## Accuracy notes
+
+Bifourcation is intentionally small and local.
+
+It does not claim to be:
+
+```txt
+a full geometric algebra library
+a full vectorization tool
+a mathematically pure open-curve Fourier system
+a literal audio rendering of Fourier coefficients
+```
+
+It is a focused interactive model:
+
+```txt
+2D geometric algebra
+direct DFT
+rotor-first Fourier visualization
+browser-native drawing, tracing, sound, and snapshots
+```
+
+## Final mental model
+
+```txt
+There is one drawing plane: e₁e₂.
+A stroke becomes an ordered signal in that plane.
+The DFT decomposes that signal into coefficients.
+Each coefficient is advanced by a rotor.
+The rotating terms are added head-to-tail.
+The endpoint is the drawing.
+Completed endpoints are cached as Fourier traces.
+The final picture appears by superposition.
+```
