@@ -168,11 +168,11 @@ function interpolatePolyline(points: Point[], targetCount: number): Point[] {
 	return result;
 }
 
-function createLineLocalPoints(width: number, height: number): Point[] {
+function createLineLocalPoints(width: number): Point[] {
 	return interpolatePolyline(
 		[
-			{ x: -width / 2, y: -height / 2 },
-			{ x: width / 2, y: height / 2 },
+			{ x: -width / 2, y: 0 },
+			{ x: width / 2, y: 0 },
 		],
 		32,
 	);
@@ -307,7 +307,7 @@ function createSineLocalPoints(width: number, height: number): Point[] {
 }
 
 function createLocalPoints(kind: ShapeKind, width: number, height: number) {
-	if (kind === "line") return createLineLocalPoints(width, height);
+	if (kind === "line") return createLineLocalPoints(width);
 	if (kind === "ellipse") return createEllipseLocalPoints(width, height);
 	if (kind === "rectangle" || kind === "parallelogram") {
 		return createRectangleLocalPoints(width, height);
@@ -340,6 +340,34 @@ export function createShapeObject({
 	width: number;
 	fill: ShapeFill | null;
 }): ShapeObject {
+	if (kind === "line") {
+		const dx = end.x - start.x;
+		const dy = end.y - start.y;
+		const length = Math.max(MIN_SHAPE_SIZE, Math.hypot(dx, dy));
+		const center = {
+			x: (start.x + end.x) / 2,
+			y: (start.y + end.y) / 2,
+		};
+
+		return {
+			id: createId("shape"),
+			kind,
+			color,
+			width,
+			fill,
+			bounds: {
+				x: center.x - length / 2,
+				y: center.y - MIN_SHAPE_SIZE / 2,
+				width: length,
+				height: MIN_SHAPE_SIZE,
+			},
+			rotation: Math.atan2(dy, dx),
+			flipX: false,
+			flipY: false,
+			skewX: 0,
+		};
+	}
+
 	const rawBounds = normalizeRectFromPoints(start, end);
 	const bounds = {
 		x: rawBounds.x,
@@ -356,9 +384,38 @@ export function createShapeObject({
 		fill,
 		bounds,
 		rotation: 0,
+		flipX: end.x < start.x,
+		flipY: end.y < start.y,
+		skewX: kind === "parallelogram" ? 0.24 : 0,
+	};
+}
+
+export function updateLineShapeFromEndpoints(
+	shape: ShapeObject,
+	start: Point,
+	end: Point,
+): ShapeObject {
+	const dx = end.x - start.x;
+	const dy = end.y - start.y;
+	const length = Math.max(MIN_SHAPE_SIZE, Math.hypot(dx, dy));
+	const center = {
+		x: (start.x + end.x) / 2,
+		y: (start.y + end.y) / 2,
+	};
+
+	return {
+		...shape,
+		kind: "line",
+		bounds: {
+			x: center.x - length / 2,
+			y: center.y - MIN_SHAPE_SIZE / 2,
+			width: length,
+			height: MIN_SHAPE_SIZE,
+		},
+		rotation: Math.atan2(dy, dx),
 		flipX: false,
 		flipY: false,
-		skewX: kind === "parallelogram" ? 0.24 : 0,
+		skewX: 0,
 	};
 }
 

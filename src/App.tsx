@@ -6,7 +6,16 @@ import {
 	type ChangeEvent,
 	type SetStateAction,
 } from "react";
-import { Redo2, Settings, Undo2 } from "lucide-react";
+import {
+	Pause,
+	Pencil,
+	Play,
+	Redo2,
+	Scissors,
+	Settings,
+	Trash2,
+	Undo2,
+} from "lucide-react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { BucketFillCanvas } from "./components/BucketFillCanvas";
 import { DrawingCanvas } from "./components/DrawingCanvas";
@@ -52,6 +61,7 @@ const DEFAULT_PEN_COLOR = PEN_COLORS[0];
 const DEFAULT_PEN_WIDTH = 4;
 const DEFAULT_BIVECTOR_VIEW: BivectorView = "disk";
 const DEFAULT_ANIMATION_TRACE_MODE: AnimationTraceMode = "sequential";
+const PASTE_OFFSET = 24;
 
 const STORAGE_KEYS = {
 	penColor: "bifourcation.penColor",
@@ -63,10 +73,10 @@ const STORAGE_KEYS = {
 } as const;
 
 const ACTIVE_BUTTON_CLASS =
-	"shrink-0 rounded-xl bg-zinc-50 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400";
+	"flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-zinc-50 font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400";
 
 const INACTIVE_BUTTON_CLASS =
-	"shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
+	"flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-zinc-700 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
 
 type AppMode = "draw" | "animate";
 type ToolMode = "draw" | "edit" | "fill";
@@ -75,6 +85,12 @@ type DrawingHistory = {
 	past: DrawingObject[][];
 	present: DrawingObject[];
 	future: DrawingObject[][];
+};
+
+type ContextMenuState = {
+	x: number;
+	y: number;
+	objectId: string | null;
 };
 
 function clampNumber(value: number, min: number, max: number) {
@@ -294,27 +310,6 @@ function ShapeIcon({ kind }: { kind: ShapeKind }) {
 	);
 }
 
-function TransformIcon() {
-	return (
-		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
-			<path
-				d="M8 8H24V24H8V8Z"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2.2"
-				strokeLinejoin="round"
-			/>
-			<path
-				d="M5 5H11M5 5V11M27 5H21M27 5V11M5 27H11M5 27V21M27 27H21M27 27V21"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2"
-				strokeLinecap="round"
-			/>
-		</svg>
-	);
-}
-
 function BucketIcon() {
 	return (
 		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
@@ -339,6 +334,42 @@ function BucketIcon() {
 			/>
 		</svg>
 	);
+}
+
+function cloneDrawingObject(object: DrawingObject): DrawingObject | null {
+	if (object.type === "shape") {
+		const id = createId("shape");
+
+		return {
+			type: "shape",
+			id,
+			shape: {
+				...object.shape,
+				id,
+				bounds: {
+					...object.shape.bounds,
+					x: object.shape.bounds.x + PASTE_OFFSET,
+					y: object.shape.bounds.y + PASTE_OFFSET,
+				},
+			},
+		};
+	}
+
+	if (object.type === "freehand") {
+		return {
+			type: "freehand",
+			id: createId("freehand"),
+			stroke: {
+				...object.stroke,
+				points: object.stroke.points.map(point => ({
+					x: point.x + PASTE_OFFSET,
+					y: point.y + PASTE_OFFSET,
+				})),
+			},
+		};
+	}
+
+	return null;
 }
 
 function App() {
@@ -374,6 +405,11 @@ function App() {
 		null,
 	);
 	const [fillOpacity, setFillOpacity] = useState(readStoredFillOpacity);
+	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(
+		null,
+	);
+	const [clipboardObject, setClipboardObject] =
+		useState<DrawingObject | null>(null);
 
 	const [penColor, setPenColor] = useState(readStoredPenColor);
 	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
@@ -529,6 +565,7 @@ function App() {
 
 		resetAnimationSideEffects();
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		setImageTraceError(null);
 
 		setDrawingHistory(currentHistory => {
@@ -549,6 +586,7 @@ function App() {
 
 		resetAnimationSideEffects();
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		setImageTraceError(null);
 
 		setDrawingHistory(currentHistory => {
@@ -569,6 +607,7 @@ function App() {
 		setImageTraceError(null);
 		setSelectedShape(null);
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		setClearSignal(value => value + 1);
 
 		setDrawingHistory(currentHistory => {
@@ -586,6 +625,7 @@ function App() {
 		setToolMode("draw");
 		setSelectedShape(null);
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		resetAnimationSideEffects();
 	}
 
@@ -593,6 +633,7 @@ function App() {
 		setMode("draw");
 		setToolMode("edit");
 		setSelectedShape(null);
+		setContextMenu(null);
 		pauseAnimationClock();
 	}
 
@@ -601,6 +642,7 @@ function App() {
 		setToolMode("fill");
 		setSelectedShape(null);
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		pauseAnimationClock();
 	}
 
@@ -625,6 +667,7 @@ function App() {
 
 		setSelectedShape(null);
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
 	}
@@ -677,7 +720,10 @@ function App() {
 			},
 		]);
 
+		setSelectedShape(null);
 		setSelectedObjectId(shape.id);
+		setMode("draw");
+		setToolMode("edit");
 	}
 
 	function commitBucketFill(fill: BucketFillObject) {
@@ -756,6 +802,31 @@ function App() {
 		);
 
 		setSelectedObjectId(null);
+		setContextMenu(null);
+	}
+
+	function copySelectedObject() {
+		if (!selectedObject) return;
+
+		setClipboardObject(selectedObject);
+		setContextMenu(null);
+	}
+
+	function pasteCopiedObject() {
+		if (!clipboardObject) return;
+
+		const nextObject = cloneDrawingObject(clipboardObject);
+		if (!nextObject) return;
+
+		commitObjects(currentObjects => [...currentObjects, nextObject]);
+
+		if (nextObject.type === "shape") {
+			setSelectedObjectId(nextObject.id);
+			setMode("draw");
+			setToolMode("edit");
+		}
+
+		setContextMenu(null);
 	}
 
 	async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -771,6 +842,7 @@ function App() {
 		setImageTraceError(null);
 		setSelectedShape(null);
 		setSelectedObjectId(null);
+		setContextMenu(null);
 		resetAnimationSideEffects();
 
 		try {
@@ -949,13 +1021,13 @@ function App() {
 			if (isTyping) return;
 
 			const key = event.key.toLowerCase();
-			const isUndo =
-				(event.metaKey || event.ctrlKey) &&
-				!event.shiftKey &&
-				key === "z";
+			const usesModifier = event.metaKey || event.ctrlKey;
+			const isUndo = usesModifier && !event.shiftKey && key === "z";
 			const isRedo =
-				(event.metaKey || event.ctrlKey) &&
+				usesModifier &&
 				((event.shiftKey && key === "z") || key === "y");
+			const isCopy = usesModifier && key === "c";
+			const isPaste = usesModifier && key === "v";
 			const isEscape = key === "escape";
 
 			if (isUndo) {
@@ -970,18 +1042,41 @@ function App() {
 				return;
 			}
 
+			if (isCopy && selectedObject) {
+				event.preventDefault();
+				copySelectedObject();
+				return;
+			}
+
+			if (isPaste && clipboardObject) {
+				event.preventDefault();
+				pasteCopiedObject();
+				return;
+			}
+
 			if (isEscape) {
 				event.preventDefault();
 				setSelectedShape(null);
 				setSelectedObjectId(null);
 				setToolMode("draw");
+				setContextMenu(null);
 			}
 		}
 
 		window.addEventListener("keydown", handleKeyDown);
 
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [canUndo, canRedo]);
+	}, [canUndo, canRedo, selectedObject, clipboardObject]);
+
+	useEffect(() => {
+		function closeContextMenu() {
+			setContextMenu(null);
+		}
+
+		window.addEventListener("click", closeContextMenu);
+
+		return () => window.removeEventListener("click", closeContextMenu);
+	}, []);
 
 	useEffect(() => {
 		stopSoundFrame();
@@ -1104,6 +1199,10 @@ function App() {
 						onBeginEdit={beginObjectEdit}
 						onChangeShape={changeShapeObject}
 						onEndEdit={endObjectEdit}
+						onContextMenuRequest={(x, y, objectId) => {
+							if (objectId) setSelectedObjectId(objectId);
+							setContextMenu({ x, y, objectId });
+						}}
 					/>
 
 					<RotorCanvas
@@ -1218,6 +1317,41 @@ function App() {
 						/>
 					</button>
 
+					{contextMenu && (
+						<div
+							className="fixed z-50 w-40 overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950/95 text-sm font-medium text-zinc-100 shadow-2xl backdrop-blur"
+							style={{
+								left: contextMenu.x,
+								top: contextMenu.y,
+							}}
+							onClick={event => event.stopPropagation()}
+						>
+							<button
+								className="block w-full px-4 py-3 text-left transition hover:bg-zinc-800"
+								onClick={copySelectedObject}
+								disabled={!selectedObject}
+							>
+								Copy
+							</button>
+
+							<button
+								className="block w-full border-t border-zinc-800 px-4 py-3 text-left transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600"
+								onClick={pasteCopiedObject}
+								disabled={!clipboardObject}
+							>
+								Paste
+							</button>
+
+							<button
+								className="block w-full border-t border-zinc-800 px-4 py-3 text-left text-red-200 transition hover:bg-red-950/50 disabled:cursor-not-allowed disabled:text-zinc-600"
+								onClick={deleteSelectedObject}
+								disabled={!selectedObject}
+							>
+								Delete
+							</button>
+						</div>
+					)}
+
 					<div
 						className={[
 							"absolute right-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
@@ -1294,15 +1428,17 @@ function App() {
 								<div className="grid grid-cols-3 gap-2">
 									<button
 										className={[
-											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
+											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
 											toolMode === "draw" &&
 											!selectedShape
 												? "border-zinc-50 bg-zinc-50 text-zinc-950"
 												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
 										].join(" ")}
 										onClick={enterDrawMode}
+										aria-label="Draw"
+										title="Draw"
 									>
-										Draw
+										<Pencil size={18} />
 									</button>
 
 									<button
@@ -1316,7 +1452,7 @@ function App() {
 										aria-label="Edit shapes"
 										title="Edit shapes"
 									>
-										<TransformIcon />
+										<Scissors size={18} />
 									</button>
 
 									<button
@@ -1669,8 +1805,10 @@ function App() {
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={enterDrawMode}
+							aria-label="Draw"
+							title="Draw"
 						>
-							Draw
+							<Pencil size={19} />
 						</button>
 
 						<button
@@ -1680,8 +1818,10 @@ function App() {
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={enterEditMode}
+							aria-label="Edit"
+							title="Edit"
 						>
-							Edit
+							<Scissors size={19} />
 						</button>
 
 						<button
@@ -1691,8 +1831,10 @@ function App() {
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={enterFillMode}
+							aria-label="Fill"
+							title="Fill"
 						>
-							Fill
+							<BucketIcon />
 						</button>
 
 						<button
@@ -1703,15 +1845,25 @@ function App() {
 							}
 							disabled={!hasAnimationData}
 							onClick={toggleAnimation}
+							aria-label={
+								isAnimationPlaying ? "Pause" : "Animate"
+							}
+							title={isAnimationPlaying ? "Pause" : "Animate"}
 						>
-							{isAnimationPlaying ? "Pause" : "Animate"}
+							{isAnimationPlaying ? (
+								<Pause size={19} />
+							) : (
+								<Play size={19} />
+							)}
 						</button>
 
 						<button
 							className={INACTIVE_BUTTON_CLASS}
 							onClick={clearEverything}
+							aria-label="Clear canvas"
+							title="Clear canvas"
 						>
-							Clear canvas
+							<Trash2 size={19} />
 						</button>
 					</div>
 				</aside>
