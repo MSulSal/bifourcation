@@ -15,7 +15,6 @@ type BucketFillCanvasProps = {
 	enabled: boolean;
 	objects: DrawingObject[];
 	color: string;
-	opacity: number;
 	onCommitFill: (fill: BucketFillObject) => void;
 };
 
@@ -162,7 +161,6 @@ export function BucketFillCanvas({
 	enabled,
 	objects,
 	color,
-	opacity,
 	onCommitFill,
 }: BucketFillCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -201,7 +199,7 @@ export function BucketFillCanvas({
 		onCommitFill({
 			id: createId("fill"),
 			color,
-			opacity,
+			opacity: 1,
 			seed,
 			canvasWidth: rect.width,
 			canvasHeight: rect.height,

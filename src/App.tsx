@@ -11,7 +11,6 @@ import {
 	Pencil,
 	Play,
 	Redo2,
-	Scissors,
 	Settings,
 	Trash2,
 	Undo2,
@@ -30,7 +29,6 @@ import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
 import {
-	clampFillOpacity,
 	createId,
 	drawingObjectToStroke,
 	flipShapeHorizontal,
@@ -69,7 +67,6 @@ const STORAGE_KEYS = {
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
 	animationTraceMode: "bifourcation.animationTraceMode",
-	fillOpacity: "bifourcation.fillOpacity",
 } as const;
 
 const ACTIVE_BUTTON_CLASS =
@@ -155,14 +152,6 @@ function readStoredAnimationTraceMode(): AnimationTraceMode {
 
 function readStoredSoundEnabled() {
 	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
-}
-
-function readStoredFillOpacity() {
-	const storedOpacity = Number(readStoredValue(STORAGE_KEYS.fillOpacity));
-
-	if (!Number.isFinite(storedOpacity)) return 0.42;
-
-	return clampFillOpacity(storedOpacity);
 }
 
 function ShapeIcon({ kind }: { kind: ShapeKind }) {
@@ -310,26 +299,51 @@ function ShapeIcon({ kind }: { kind: ShapeKind }) {
 	);
 }
 
-function BucketIcon() {
+function SelectionIcon() {
 	return (
 		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
-			<path
-				d="M10 7L23 20L15 28L5 18L10 7Z"
+			<rect
+				x="7"
+				y="7"
+				width="18"
+				height="18"
 				fill="none"
 				stroke="currentColor"
-				strokeWidth="2.2"
+				strokeWidth="2"
+				strokeDasharray="4 3"
 				strokeLinejoin="round"
 			/>
 			<path
-				d="M8 9L15 2L28 15L23 20"
+				d="M19 19L27 27M22 27H27V22"
 				fill="none"
 				stroke="currentColor"
 				strokeWidth="2.2"
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			/>
+		</svg>
+	);
+}
+
+function BucketIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
 			<path
-				d="M24 25C24 25 27 21 27 19C27 17.7 25.9 17 24 17C22.1 17 21 17.7 21 19C21 21 24 25 24 25Z"
+				d="M8 17L17 8L26 17L17 26L8 17Z"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.2"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M12 17H22"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.2"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M24 25C24 25 27 21.8 27 19.8C27 18.5 25.9 17.8 24 17.8C22.1 17.8 21 18.5 21 19.8C21 21.8 24 25 24 25Z"
 				fill="currentColor"
 			/>
 		</svg>
@@ -404,7 +418,6 @@ function App() {
 	const [selectedObjectId, setSelectedObjectId] = useState<string | null>(
 		null,
 	);
-	const [fillOpacity, setFillOpacity] = useState(readStoredFillOpacity);
 	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(
 		null,
 	);
@@ -1007,10 +1020,6 @@ function App() {
 	}, [isSoundEnabled]);
 
 	useEffect(() => {
-		writeStoredValue(STORAGE_KEYS.fillOpacity, String(fillOpacity));
-	}, [fillOpacity]);
-
-	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
 			const target = event.target as HTMLElement | null;
 			const isTyping =
@@ -1187,7 +1196,6 @@ function App() {
 						enabled={isFillMode}
 						objects={drawingObjects}
 						color={penColor}
-						opacity={fillOpacity}
 						onCommitFill={commitBucketFill}
 					/>
 
@@ -1452,7 +1460,7 @@ function App() {
 										aria-label="Edit shapes"
 										title="Edit shapes"
 									>
-										<Scissors size={18} />
+										<SelectionIcon />
 									</button>
 
 									<button
@@ -1525,30 +1533,7 @@ function App() {
 									Bucket fill
 								</p>
 
-								<div className="flex items-center justify-between">
-									<span className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Opacity
-									</span>
-									<span className="text-sm font-medium text-zinc-200">
-										{Math.round(fillOpacity * 100)}%
-									</span>
-								</div>
-
-								<input
-									className="mt-2 w-full accent-zinc-50"
-									type="range"
-									min={0}
-									max={1}
-									step={0.02}
-									value={fillOpacity}
-									onChange={event =>
-										setFillOpacity(
-											Number(event.target.value),
-										)
-									}
-								/>
-
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
+								<p className="text-xs leading-5 text-zinc-500">
 									Select the bucket tool, choose a color, then
 									click the canvas. Open loops can leak to the
 									canvas edge.
@@ -1627,7 +1612,7 @@ function App() {
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 								<div className="mb-3 flex items-center justify-between">
 									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Width
+										Stroke width
 									</p>
 
 									<span className="text-sm font-medium text-zinc-200">
@@ -1646,6 +1631,11 @@ function App() {
 										setPenWidth(Number(event.target.value))
 									}
 								/>
+
+								<p className="mt-3 text-xs leading-5 text-zinc-500">
+									Applies to freehand strokes, shape outlines,
+									and imported image traces.
+								</p>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
@@ -1821,7 +1811,7 @@ function App() {
 							aria-label="Edit"
 							title="Edit"
 						>
-							<Scissors size={19} />
+							<SelectionIcon />
 						</button>
 
 						<button
