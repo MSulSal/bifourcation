@@ -1,26 +1,42 @@
-import { useEffect, useRef } from "react";
-import type { Dispatch, PointerEvent, SetStateAction } from "react";
-import type { Stroke } from "../types/geometry";
-import type { Point } from "../types/geometry";
+import {
+	useEffect,
+	useRef,
+	type PointerEvent as ReactPointerEvent,
+} from "react";
+import { createId, renderDrawingObject } from "../math/shapes";
+import type { DrawingObject, Point, Stroke } from "../types/geometry";
 
 type DrawingCanvasProps = {
-	strokes: Stroke[];
+	objects: DrawingObject[];
 	clearSignal: number;
 	penColor: string;
 	penWidth: number;
-	onStrokesChange: Dispatch<SetStateAction<Stroke[]>>;
+	isInteractive: boolean;
+	onCommitStroke: (stroke: Stroke) => void;
 };
 
+function getPointerPoint(
+	event: ReactPointerEvent<HTMLCanvasElement>,
+	canvas: HTMLCanvasElement,
+): Point {
+	const rect = canvas.getBoundingClientRect();
+
+	return {
+		x: event.clientX - rect.left,
+		y: event.clientY - rect.top,
+	};
+}
+
 export function DrawingCanvas({
-	strokes,
+	objects,
 	clearSignal,
 	penColor,
 	penWidth,
-	onStrokesChange,
+	isInteractive,
+	onCommitStroke,
 }: DrawingCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const activeStrokeRef = useRef<Stroke | null>(null);
-	const activePointerIdRef = useRef<number | null>(null);
+	const currentStrokeRef = useRef<Stroke | null>(null);
 
 	function resizeCanvasToDisplaySize() {
 		const canvas = canvasRef.current;
@@ -38,7 +54,7 @@ export function DrawingCanvas({
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 	}
 
-	function clearCanvas() {
+	function drawCanvas(currentStroke = currentStrokeRef.current) {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 
@@ -47,174 +63,136 @@ export function DrawingCanvas({
 		if (!ctx) return;
 
 		ctx.clearRect(0, 0, rect.width, rect.height);
-	}
 
-	function drawStroke(stroke: Stroke) {
-		const canvas = canvasRef.current;
-		if (!canvas || stroke.points.length === 0) return;
-
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return;
-
-		ctx.strokeStyle = stroke.color;
-		ctx.fillStyle = stroke.color;
-		ctx.lineWidth = stroke.width;
-		ctx.lineCap = "round";
-		ctx.lineJoin = "round";
-
-		if (stroke.points.length === 1) {
-			const point = stroke.points[0];
-
-			ctx.beginPath();
-			ctx.arc(
-				point.x,
-				point.y,
-				Math.max(1, stroke.width / 2),
-				0,
-				Math.PI * 2,
-			);
-			ctx.fill();
-			return;
+		for (const object of objects) {
+			renderDrawingObject(ctx, object);
 		}
 
-		ctx.beginPath();
-		ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-
-		for (const point of stroke.points.slice(1)) {
-			ctx.lineTo(point.x, point.y);
-		}
-
-		ctx.stroke();
-	}
-
-	function redrawCanvas() {
-		clearCanvas();
-
-		for (const stroke of strokes) {
-			drawStroke(stroke);
+		if (currentStroke && currentStroke.points.length >= 2) {
+			renderDrawingObject(ctx, {
+				type: "freehand",
+				id: createId("preview"),
+				stroke: currentStroke,
+			});
 		}
 	}
 
-	function getCanvasPoint(event: PointerEvent<HTMLCanvasElement>): Point {
-		const canvas = canvasRef.current;
-
-		if (!canvas) {
-			return {
-				x: event.clientX,
-				y: event.clientY,
-			};
-		}
-
-		const rect = canvas.getBoundingClientRect();
-
-		return {
-			x: event.clientX - rect.left,
-			y: event.clientY - rect.top,
-		};
-	}
-
-	function drawSegment(from: Point, to: Point, color: string, width: number) {
-		const canvas = canvasRef.current;
-		if (!canvas) return;
-
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return;
-
-		ctx.strokeStyle = color;
-		ctx.lineWidth = width;
-		ctx.lineCap = "round";
-		ctx.lineJoin = "round";
-
-		ctx.beginPath();
-		ctx.moveTo(from.x, from.y);
-		ctx.lineTo(to.x, to.y);
-		ctx.stroke();
-	}
-
-	function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
-		if (event.button !== 0) return;
+	function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
+		if (!isInteractive || event.button !== 0) return;
 
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 
-		const point = getCanvasPoint(event);
+		event.preventDefault();
 
-		activePointerIdRef.current = event.pointerId;
-		activeStrokeRef.current = {
+		const point = getPointerPoint(event, canvas);
+
+		canvas.setPointerCapture(event.pointerId);
+
+		currentStrokeRef.current = {
 			color: penColor,
 			width: penWidth,
 			points: [point],
 		};
 
-		canvas.setPointerCapture(event.pointerId);
+		drawCanvas();
 	}
 
-	function handlePointerMove(event: PointerEvent<HTMLCanvasElement>) {
-		if (activePointerIdRef.current !== event.pointerId) return;
-
-		const activeStroke = activeStrokeRef.current;
-		if (!activeStroke) return;
-
-		const point = getCanvasPoint(event);
-		const previousPoint =
-			activeStroke.points[activeStroke.points.length - 1];
-
-		activeStroke.points.push(point);
-
-		drawSegment(
-			previousPoint,
-			point,
-			activeStroke.color,
-			activeStroke.width,
-		);
-	}
-
-	function finishStroke(event: PointerEvent<HTMLCanvasElement>) {
-		if (activePointerIdRef.current !== event.pointerId) return;
+	function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+		if (!isInteractive) return;
 
 		const canvas = canvasRef.current;
-		const activeStroke = activeStrokeRef.current;
+		const currentStroke = currentStrokeRef.current;
+
+		if (!canvas || !currentStroke) return;
+
+		const point = getPointerPoint(event, canvas);
+		const previous = currentStroke.points.at(-1);
+
+		if (
+			previous &&
+			Math.hypot(point.x - previous.x, point.y - previous.y) < 1.5
+		) {
+			return;
+		}
+
+		currentStrokeRef.current = {
+			...currentStroke,
+			points: [...currentStroke.points, point],
+		};
+
+		drawCanvas();
+	}
+
+	function finishStroke(event: ReactPointerEvent<HTMLCanvasElement>) {
+		const canvas = canvasRef.current;
+		const currentStroke = currentStrokeRef.current;
+
+		if (!canvas || !currentStroke) return;
+
+		if (canvas.hasPointerCapture(event.pointerId)) {
+			canvas.releasePointerCapture(event.pointerId);
+		}
+
+		currentStrokeRef.current = null;
+
+		if (currentStroke.points.length >= 2) {
+			onCommitStroke(currentStroke);
+		}
+
+		drawCanvas(null);
+	}
+
+	function cancelStroke(event: ReactPointerEvent<HTMLCanvasElement>) {
+		const canvas = canvasRef.current;
 
 		if (canvas?.hasPointerCapture(event.pointerId)) {
 			canvas.releasePointerCapture(event.pointerId);
 		}
 
-		activePointerIdRef.current = null;
-		activeStrokeRef.current = null;
-
-		if (!activeStroke || activeStroke.points.length < 2) return;
-
-		onStrokesChange(currentStrokes => [...currentStrokes, activeStroke]);
+		currentStrokeRef.current = null;
+		drawCanvas(null);
 	}
 
 	useEffect(() => {
-		resizeCanvasToDisplaySize();
-		redrawCanvas();
-
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 
+		resizeCanvasToDisplaySize();
+		drawCanvas();
+
 		const resizeObserver = new ResizeObserver(() => {
 			resizeCanvasToDisplaySize();
-			redrawCanvas();
+			drawCanvas();
 		});
 
 		resizeObserver.observe(canvas);
 
-		return () => {
-			resizeObserver.disconnect();
-		};
-	}, [strokes, clearSignal]);
+		return () => resizeObserver.disconnect();
+	}, []);
+
+	useEffect(() => {
+		drawCanvas();
+	}, [objects]);
+
+	useEffect(() => {
+		currentStrokeRef.current = null;
+		drawCanvas(null);
+	}, [clearSignal]);
 
 	return (
 		<canvas
 			ref={canvasRef}
-			className="block h-full w-full touch-none"
+			className={[
+				"absolute inset-0 block h-full w-full touch-none",
+				isInteractive
+					? "pointer-events-auto cursor-crosshair"
+					: "pointer-events-none",
+			].join(" ")}
 			onPointerDown={handlePointerDown}
 			onPointerMove={handlePointerMove}
 			onPointerUp={finishStroke}
-			onPointerCancel={finishStroke}
-			onPointerLeave={finishStroke}
+			onPointerCancel={cancelStroke}
 		/>
 	);
 }

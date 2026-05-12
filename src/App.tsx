@@ -6,9 +6,10 @@ import {
 	type ChangeEvent,
 	type SetStateAction,
 } from "react";
-import { Settings } from "lucide-react";
+import { Redo2, Settings, Undo2 } from "lucide-react";
 import { DrawingSoundEngine, type SonicStroke } from "./audio/soundEngine";
 import { DrawingCanvas } from "./components/DrawingCanvas";
+import { ObjectTransformCanvas } from "./components/ObjectTransformCanvas";
 import {
 	RotorCanvas,
 	type AnimationTraceMode,
@@ -18,8 +19,23 @@ import { ShapePlacementCanvas } from "./components/ShapePlacementCanvas";
 import { traceImageFileToStrokes } from "./image/edgeTracing";
 import { computeFourierTerms } from "./math/fourier";
 import { resamplePath } from "./math/path";
-import type { ShapeKind } from "./math/shapes";
-import type { Stroke } from "./types/geometry";
+import {
+	clampFillOpacity,
+	createId,
+	drawingObjectToStroke,
+	flipShapeHorizontal,
+	flipShapeVertical,
+	getShapeLabel,
+	setShapeFill,
+	SHAPE_TOOLS,
+} from "./math/shapes";
+import type {
+	DrawingObject,
+	ShapeFill,
+	ShapeKind,
+	ShapeObject,
+	Stroke,
+} from "./types/geometry";
 
 const PEN_COLORS = [
 	"#e84d3d",
@@ -30,16 +46,6 @@ const PEN_COLORS = [
 	"#f2994a",
 	"#56ccf2",
 	"#eb5757",
-];
-
-const SHAPE_TOOLS: ShapeKind[] = [
-	"line",
-	"circle",
-	"rectangle",
-	"triangle",
-	"star",
-	"spiral",
-	"sine",
 ];
 
 const DEFAULT_PEN_COLOR = PEN_COLORS[0];
@@ -53,6 +59,8 @@ const STORAGE_KEYS = {
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
 	animationTraceMode: "bifourcation.animationTraceMode",
+	fillEnabled: "bifourcation.fillEnabled",
+	fillOpacity: "bifourcation.fillOpacity",
 } as const;
 
 const ACTIVE_BUTTON_CLASS =
@@ -62,11 +70,12 @@ const INACTIVE_BUTTON_CLASS =
 	"shrink-0 rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent";
 
 type AppMode = "draw" | "animate";
+type ToolMode = "draw" | "edit";
 
 type DrawingHistory = {
-	past: Stroke[][];
-	present: Stroke[];
-	future: Stroke[][];
+	past: DrawingObject[][];
+	present: DrawingObject[];
+	future: DrawingObject[][];
 };
 
 function clampNumber(value: number, min: number, max: number) {
@@ -133,12 +142,24 @@ function readStoredSoundEnabled() {
 	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
 }
 
+function readStoredFillEnabled() {
+	return readStoredValue(STORAGE_KEYS.fillEnabled) === "true";
+}
+
+function readStoredFillOpacity() {
+	const storedOpacity = Number(readStoredValue(STORAGE_KEYS.fillOpacity));
+
+	if (!Number.isFinite(storedOpacity)) return 0.28;
+
+	return clampFillOpacity(storedOpacity);
+}
+
 function ShapeIcon({ kind }: { kind: ShapeKind }) {
 	if (kind === "line") {
 		return (
 			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
 				<path
-					d="M6 23L26 9"
+					d="M6 24L26 8"
 					fill="none"
 					stroke="currentColor"
 					strokeWidth="2.4"
@@ -148,13 +169,14 @@ function ShapeIcon({ kind }: { kind: ShapeKind }) {
 		);
 	}
 
-	if (kind === "circle") {
+	if (kind === "ellipse") {
 		return (
 			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
-				<circle
+				<ellipse
 					cx="16"
 					cy="16"
-					r="9"
+					rx="10"
+					ry="7"
 					fill="none"
 					stroke="currentColor"
 					strokeWidth="2.4"
@@ -180,11 +202,53 @@ function ShapeIcon({ kind }: { kind: ShapeKind }) {
 		);
 	}
 
-	if (kind === "triangle") {
+	if (kind === "parallelogram") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M10 9H27L22 23H5L10 9Z"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "triangle-equilateral") {
 		return (
 			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
 				<path
 					d="M16 6L26 24H6L16 6Z"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "triangle-isosceles") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M16 5L25 25H7L16 5Z"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2.4"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		);
+	}
+
+	if (kind === "triangle-scalene") {
+		return (
+			<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+				<path
+					d="M8 25H26L12 6L8 25Z"
 					fill="none"
 					stroke="currentColor"
 					strokeWidth="2.4"
@@ -235,15 +299,25 @@ function ShapeIcon({ kind }: { kind: ShapeKind }) {
 	);
 }
 
-function getShapeLabel(kind: ShapeKind) {
-	if (kind === "line") return "Line";
-	if (kind === "circle") return "Circle";
-	if (kind === "rectangle") return "Rectangle";
-	if (kind === "triangle") return "Triangle";
-	if (kind === "star") return "Star";
-	if (kind === "spiral") return "Spiral";
-
-	return "Sine wave";
+function TransformIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<path
+				d="M8 8H24V24H8V8Z"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.2"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M5 5H11M5 5V11M27 5H21M27 5V11M5 27H11M5 27V21M27 27H21M27 27V21"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
 }
 
 function App() {
@@ -251,6 +325,7 @@ function App() {
 	const soundEngineRef = useRef<DrawingSoundEngine | null>(null);
 	const soundFrameRef = useRef<number | null>(null);
 	const imageInputRef = useRef<HTMLInputElement | null>(null);
+	const editSnapshotRef = useRef<DrawingObject[] | null>(null);
 
 	const [clearSignal, setClearSignal] = useState(0);
 	const [drawingHistory, setDrawingHistory] = useState<DrawingHistory>({
@@ -259,6 +334,7 @@ function App() {
 		future: [],
 	});
 	const [mode, setMode] = useState<AppMode>("draw");
+	const [toolMode, setToolMode] = useState<ToolMode>("draw");
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
@@ -273,11 +349,35 @@ function App() {
 	const [isTracingImage, setIsTracingImage] = useState(false);
 	const [imageTraceError, setImageTraceError] = useState<string | null>(null);
 	const [selectedShape, setSelectedShape] = useState<ShapeKind | null>(null);
+	const [selectedObjectId, setSelectedObjectId] = useState<string | null>(
+		null,
+	);
+	const [isFillEnabled, setIsFillEnabled] = useState(readStoredFillEnabled);
+	const [fillOpacity, setFillOpacity] = useState(readStoredFillOpacity);
 
 	const [penColor, setPenColor] = useState(readStoredPenColor);
 	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
 
-	const strokes = drawingHistory.present;
+	const drawingObjects = drawingHistory.present;
+	const strokes = useMemo(
+		() => drawingObjects.map(drawingObjectToStroke),
+		[drawingObjects],
+	);
+
+	const selectedObject = drawingObjects.find(
+		object => object.id === selectedObjectId,
+	);
+
+	const selectedShapeObject =
+		selectedObject?.type === "shape" ? selectedObject.shape : null;
+
+	const activeFill: ShapeFill | null = isFillEnabled
+		? {
+				color: penColor,
+				opacity: fillOpacity,
+			}
+		: null;
+
 	const resampledPointCount = 256;
 	const visibleTermCount = resampledPointCount;
 
@@ -330,7 +430,9 @@ function App() {
 	);
 
 	const isAnimationMode = mode === "animate";
-	const isCanvasInteractive = mode === "draw" && selectedShape === null;
+	const isEditMode = mode === "draw" && toolMode === "edit";
+	const isCanvasInteractive =
+		mode === "draw" && toolMode === "draw" && selectedShape === null;
 	const canUndo = drawingHistory.past.length > 0;
 	const canRedo = drawingHistory.future.length > 0;
 
@@ -366,22 +468,39 @@ function App() {
 		soundEngineRef.current?.resetClock();
 	}
 
-	function commitStrokes(update: SetStateAction<Stroke[]>) {
+	function commitObjects(update: SetStateAction<DrawingObject[]>) {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
 
 		setDrawingHistory(currentHistory => {
-			const nextStrokes =
+			const nextObjects =
 				typeof update === "function"
 					? update(currentHistory.present)
 					: update;
 
-			if (nextStrokes === currentHistory.present) return currentHistory;
+			if (nextObjects === currentHistory.present) return currentHistory;
 
 			return {
 				past: [...currentHistory.past, currentHistory.present],
-				present: nextStrokes,
+				present: nextObjects,
 				future: [],
+			};
+		});
+	}
+
+	function replacePresentObjects(update: SetStateAction<DrawingObject[]>) {
+		resetAnimationSideEffects();
+		setImageTraceError(null);
+
+		setDrawingHistory(currentHistory => {
+			const nextObjects =
+				typeof update === "function"
+					? update(currentHistory.present)
+					: update;
+
+			return {
+				...currentHistory,
+				present: nextObjects,
 			};
 		});
 	}
@@ -390,6 +509,7 @@ function App() {
 		if (!canUndo) return;
 
 		resetAnimationSideEffects();
+		setSelectedObjectId(null);
 		setImageTraceError(null);
 
 		setDrawingHistory(currentHistory => {
@@ -409,6 +529,7 @@ function App() {
 		if (!canRedo) return;
 
 		resetAnimationSideEffects();
+		setSelectedObjectId(null);
 		setImageTraceError(null);
 
 		setDrawingHistory(currentHistory => {
@@ -428,6 +549,7 @@ function App() {
 		resetAnimationSideEffects();
 		setImageTraceError(null);
 		setSelectedShape(null);
+		setSelectedObjectId(null);
 		setClearSignal(value => value + 1);
 
 		setDrawingHistory(currentHistory => {
@@ -442,8 +564,17 @@ function App() {
 	}
 
 	function enterDrawMode() {
+		setToolMode("draw");
 		setSelectedShape(null);
+		setSelectedObjectId(null);
 		resetAnimationSideEffects();
+	}
+
+	function enterEditMode() {
+		setMode("draw");
+		setToolMode("edit");
+		setSelectedShape(null);
+		pauseAnimationClock();
 	}
 
 	async function toggleAnimation() {
@@ -466,6 +597,7 @@ function App() {
 		}
 
 		setSelectedShape(null);
+		setSelectedObjectId(null);
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
 	}
@@ -497,8 +629,101 @@ function App() {
 		}
 	}
 
-	function commitShape(stroke: Stroke) {
-		commitStrokes(currentStrokes => [...currentStrokes, stroke]);
+	function commitStroke(stroke: Stroke) {
+		commitObjects(currentObjects => [
+			...currentObjects,
+			{
+				type: "freehand",
+				id: createId("freehand"),
+				stroke,
+			},
+		]);
+	}
+
+	function commitShape(shape: ShapeObject) {
+		commitObjects(currentObjects => [
+			...currentObjects,
+			{
+				type: "shape",
+				id: shape.id,
+				shape,
+			},
+		]);
+
+		setSelectedObjectId(shape.id);
+	}
+
+	function beginObjectEdit() {
+		if (!editSnapshotRef.current) {
+			editSnapshotRef.current = drawingHistory.present;
+		}
+
+		pauseAnimationClock();
+	}
+
+	function changeShapeObject(
+		id: string,
+		updater: (shape: ShapeObject) => ShapeObject,
+	) {
+		replacePresentObjects(currentObjects =>
+			currentObjects.map(object => {
+				if (object.id !== id || object.type !== "shape") return object;
+
+				return {
+					...object,
+					shape: updater(object.shape),
+				};
+			}),
+		);
+	}
+
+	function endObjectEdit() {
+		const snapshot = editSnapshotRef.current;
+
+		if (!snapshot) return;
+
+		setDrawingHistory(currentHistory => ({
+			past: [...currentHistory.past, snapshot],
+			present: currentHistory.present,
+			future: [],
+		}));
+
+		editSnapshotRef.current = null;
+	}
+
+	function commitSelectedShapeUpdate(
+		updater: (shape: ShapeObject) => ShapeObject,
+	) {
+		if (!selectedObjectId) return;
+
+		commitObjects(currentObjects =>
+			currentObjects.map(object => {
+				if (object.id !== selectedObjectId || object.type !== "shape") {
+					return object;
+				}
+
+				return {
+					...object,
+					shape: updater(object.shape),
+				};
+			}),
+		);
+	}
+
+	function deleteSelectedObject() {
+		if (!selectedObjectId) return;
+
+		commitObjects(currentObjects =>
+			currentObjects.filter(object => object.id !== selectedObjectId),
+		);
+
+		setSelectedObjectId(null);
+	}
+
+	function applyCurrentFillToSelectedShape() {
+		if (!selectedShapeObject) return;
+
+		commitSelectedShapeUpdate(shape => setShapeFill(shape, activeFill));
 	}
 
 	async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -513,6 +738,7 @@ function App() {
 		setIsTracingImage(true);
 		setImageTraceError(null);
 		setSelectedShape(null);
+		setSelectedObjectId(null);
 		resetAnimationSideEffects();
 
 		try {
@@ -535,9 +761,13 @@ function App() {
 				return;
 			}
 
-			commitStrokes(currentStrokes => [
-				...currentStrokes,
-				...tracedStrokes,
+			commitObjects(currentObjects => [
+				...currentObjects,
+				...tracedStrokes.map(stroke => ({
+					type: "freehand" as const,
+					id: createId("trace"),
+					stroke,
+				})),
 			]);
 		} catch (error) {
 			console.error("Image tracing failed.", error);
@@ -673,6 +903,14 @@ function App() {
 	}, [isSoundEnabled]);
 
 	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.fillEnabled, String(isFillEnabled));
+	}, [isFillEnabled]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.fillOpacity, String(fillOpacity));
+	}, [fillOpacity]);
+
+	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
 			const target = event.target as HTMLElement | null;
 			const isTyping =
@@ -704,16 +942,17 @@ function App() {
 				return;
 			}
 
-			if (isEscape && selectedShape) {
+			if (isEscape) {
 				event.preventDefault();
 				setSelectedShape(null);
+				setSelectedObjectId(null);
 			}
 		}
 
 		window.addEventListener("keydown", handleKeyDown);
 
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [canUndo, canRedo, selectedShape]);
+	}, [canUndo, canRedo]);
 
 	useEffect(() => {
 		stopSoundFrame();
@@ -752,6 +991,7 @@ function App() {
 		isAnimationMode,
 		sonicStrokes,
 		bivectorView,
+		animationTraceMode,
 	]);
 
 	return (
@@ -796,23 +1036,37 @@ function App() {
 						].join(" ")}
 					>
 						<DrawingCanvas
-							strokes={strokes}
+							objects={drawingObjects}
 							clearSignal={clearSignal}
 							penColor={penColor}
 							penWidth={penWidth}
-							onStrokesChange={commitStrokes}
+							isInteractive={isCanvasInteractive}
+							onCommitStroke={commitStroke}
 						/>
 					</div>
 
 					<ShapePlacementCanvas
 						selectedShape={
-							mode === "draw" && selectedShape
+							mode === "draw" &&
+							toolMode === "draw" &&
+							selectedShape
 								? selectedShape
 								: null
 						}
 						color={penColor}
 						width={penWidth}
+						fill={activeFill}
 						onCommitShape={commitShape}
+					/>
+
+					<ObjectTransformCanvas
+						objects={drawingObjects}
+						selectedObjectId={selectedObjectId}
+						enabled={isEditMode}
+						onSelectObject={setSelectedObjectId}
+						onBeginEdit={beginObjectEdit}
+						onChangeShape={changeShapeObject}
+						onEndEdit={endObjectEdit}
 					/>
 
 					<RotorCanvas
@@ -825,6 +1079,8 @@ function App() {
 					/>
 
 					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-wrap gap-2 text-[11px] font-medium text-zinc-100/45 sm:text-xs">
+						<span>{drawingObjects.length} objects</span>
+						<span>·</span>
 						<span>{strokes.length} strokes</span>
 						<span>·</span>
 						<span>{pointCount} raw</span>
@@ -832,41 +1088,41 @@ function App() {
 						<span>{totalResampledPoints} sampled</span>
 						<span>·</span>
 						<span>{totalFourierTerms} terms</span>
-						{selectedShape && mode === "draw" && (
+
+						{selectedShape &&
+							mode === "draw" &&
+							toolMode === "draw" && (
+								<>
+									<span>·</span>
+									<span className="text-zinc-100/70">
+										{getShapeLabel(selectedShape)} tool
+									</span>
+								</>
+							)}
+
+						{isEditMode && (
 							<>
 								<span>·</span>
 								<span className="text-zinc-100/70">
-									{getShapeLabel(selectedShape)} tool
-								</span>
-							</>
-						)}
-						{isAnimationMode && (
-							<>
-								<span className="hidden sm:inline">·</span>
-								<span className="hidden font-mono sm:inline">
-									{animationTraceMode === "sequential"
-										? "sequential strokes"
-										: "together mode"}
+									edit tool
 								</span>
 							</>
 						)}
 					</div>
 
-					{selectedShape && mode === "draw" && (
-						<div className="pointer-events-none absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur">
-							Press to anchor. Drag to scale and rotate. Release
-							to commit.
-						</div>
-					)}
-
-					{isAnimationMode && !isAnimationPlaying && (
-						<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-							<div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-zinc-700/70 bg-zinc-950/60 shadow-lg backdrop-blur">
-								<div className="flex gap-2">
-									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
-									<div className="h-10 w-3 rounded-full bg-zinc-100/90" />
-								</div>
+					{selectedShape &&
+						mode === "draw" &&
+						toolMode === "draw" && (
+							<div className="pointer-events-none absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur">
+								Press for start corner. Drag to the opposite
+								corner. Release to commit.
 							</div>
+						)}
+
+					{isEditMode && (
+						<div className="pointer-events-none absolute bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur">
+							Select a shape. Drag to move. Use handles to scale
+							or rotate.
 						</div>
 					)}
 
@@ -892,7 +1148,7 @@ function App() {
 					)}
 
 					<button
-						className="absolute right-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-3 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => setIsDrawerOpen(value => !value)}
 						aria-label={
 							isDrawerOpen
@@ -911,7 +1167,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-16 z-30 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
+							"absolute right-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
 							isDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -925,25 +1181,25 @@ function App() {
 
 								<div className="grid grid-cols-2 gap-2">
 									<button
-										className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+										className="flex items-center justify-center rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
 										onClick={undo}
 										disabled={!canUndo}
+										aria-label="Undo"
+										title="Undo"
 									>
-										Undo
+										<Undo2 size={18} />
 									</button>
 
 									<button
-										className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+										className="flex items-center justify-center rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
 										onClick={redo}
 										disabled={!canRedo}
+										aria-label="Redo"
+										title="Redo"
 									>
-										Redo
+										<Redo2 size={18} />
 									</button>
 								</div>
-
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Shortcuts: Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
-								</p>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
@@ -975,12 +1231,41 @@ function App() {
 										</button>
 									))}
 								</div>
+							</section>
 
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Sequential traces strokes in drawing order.
-									Together starts every stroke at the same
-									time.
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Tools
 								</p>
+
+								<div className="grid grid-cols-2 gap-2">
+									<button
+										className={[
+											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
+											toolMode === "draw" &&
+											!selectedShape
+												? "border-zinc-50 bg-zinc-50 text-zinc-950"
+												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+										].join(" ")}
+										onClick={enterDrawMode}
+									>
+										Draw
+									</button>
+
+									<button
+										className={[
+											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
+											toolMode === "edit"
+												? "border-zinc-50 bg-zinc-50 text-zinc-950"
+												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+										].join(" ")}
+										onClick={enterEditMode}
+										aria-label="Edit shapes"
+										title="Edit shapes"
+									>
+										<TransformIcon />
+									</button>
+								</div>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
@@ -1001,19 +1286,22 @@ function App() {
 									)}
 								</div>
 
-								<div className="grid grid-cols-4 gap-2">
+								<div className="grid grid-cols-5 gap-2">
 									{SHAPE_TOOLS.map(kind => (
 										<button
 											key={kind}
 											className={[
 												"flex aspect-square items-center justify-center rounded-xl border transition",
-												selectedShape === kind
+												selectedShape === kind &&
+												toolMode === "draw"
 													? "border-zinc-50 bg-zinc-50 text-zinc-950"
 													: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
 											].join(" ")}
 											onClick={() => {
 												setMode("draw");
+												setToolMode("draw");
 												setIsAnimationPlaying(false);
+												setSelectedObjectId(null);
 												setSelectedShape(current =>
 													current === kind
 														? null
@@ -1027,13 +1315,130 @@ function App() {
 										</button>
 									))}
 								</div>
-
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Select a shape, then press and drag on the
-									canvas to scale and rotate it. Release to
-									finalize it as a normal stroke.
-								</p>
 							</section>
+
+							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Fill
+								</p>
+
+								<div className="grid grid-cols-2 gap-2">
+									<button
+										className={[
+											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
+											!isFillEnabled
+												? "border-zinc-50 bg-zinc-50 text-zinc-950"
+												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+										].join(" ")}
+										onClick={() => setIsFillEnabled(false)}
+									>
+										None
+									</button>
+
+									<button
+										className={[
+											"rounded-xl border px-3 py-3 text-sm font-semibold transition",
+											isFillEnabled
+												? "border-zinc-50 bg-zinc-50 text-zinc-950"
+												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+										].join(" ")}
+										onClick={() => setIsFillEnabled(true)}
+									>
+										Solid
+									</button>
+								</div>
+
+								<div className="mt-3 flex items-center justify-between">
+									<span className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Opacity
+									</span>
+									<span className="text-sm font-medium text-zinc-200">
+										{Math.round(fillOpacity * 100)}%
+									</span>
+								</div>
+
+								<input
+									className="mt-2 w-full accent-zinc-50"
+									type="range"
+									min={0}
+									max={1}
+									step={0.02}
+									value={fillOpacity}
+									onChange={event =>
+										setFillOpacity(
+											Number(event.target.value),
+										)
+									}
+								/>
+
+								<button
+									className="mt-3 w-full rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+									onClick={applyCurrentFillToSelectedShape}
+									disabled={!selectedShapeObject}
+								>
+									Apply to selected
+								</button>
+							</section>
+
+							{selectedShapeObject && (
+								<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
+									<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Selected shape
+									</p>
+
+									<p className="mb-3 text-sm font-semibold text-zinc-100">
+										{getShapeLabel(
+											selectedShapeObject.kind,
+										)}
+									</p>
+
+									<div className="grid grid-cols-2 gap-2">
+										<button
+											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
+											onClick={() =>
+												commitSelectedShapeUpdate(
+													flipShapeHorizontal,
+												)
+											}
+										>
+											Flip H
+										</button>
+
+										<button
+											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
+											onClick={() =>
+												commitSelectedShapeUpdate(
+													flipShapeVertical,
+												)
+											}
+										>
+											Flip V
+										</button>
+
+										<button
+											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
+											onClick={() =>
+												commitSelectedShapeUpdate(
+													shape =>
+														setShapeFill(
+															shape,
+															null,
+														),
+												)
+											}
+										>
+											No fill
+										</button>
+
+										<button
+											className="rounded-xl border border-red-900/70 px-3 py-3 text-sm font-semibold text-red-200 transition hover:bg-red-950/50"
+											onClick={deleteSelectedObject}
+										>
+											Delete
+										</button>
+									</div>
+								</section>
+							)}
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
@@ -1081,17 +1486,6 @@ function App() {
 										setPenWidth(Number(event.target.value))
 									}
 								/>
-
-								<div className="mt-4 flex h-12 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950/80">
-									<div
-										className="rounded-full"
-										style={{
-											width: penWidth,
-											height: penWidth,
-											backgroundColor: penColor,
-										}}
-									/>
-								</div>
 							</section>
 
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
@@ -1118,12 +1512,6 @@ function App() {
 										? "Tracing edges..."
 										: "Import image"}
 								</button>
-
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Uses classic threshold and Sobel-style edge
-									tracing. Best with icons, sketches, logos,
-									and high-contrast images.
-								</p>
 
 								{imageTraceError && (
 									<p className="mt-3 text-xs leading-5 text-red-300">
@@ -1163,12 +1551,6 @@ function App() {
 
 									<p className="font-mono text-[11px] leading-5 text-zinc-300">
 										termₖ = cₖRₖ(t)
-									</p>
-
-									<p className="text-zinc-500">
-										Disk shows rotor symmetry. Blade shows
-										oriented area. Companion shows e₁e₂
-										acting as a 90° rotation.
 									</p>
 								</div>
 							</section>
@@ -1214,7 +1596,7 @@ function App() {
 					<button
 						className="absolute bottom-3 right-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
 						onClick={() => setIsSnapshotMenuOpen(value => !value)}
-						disabled={strokes.length === 0}
+						disabled={drawingObjects.length === 0}
 						aria-label="Open snapshot menu"
 						title="Snapshot"
 					>
@@ -1233,7 +1615,7 @@ function App() {
 						</svg>
 					</button>
 
-					{isSnapshotMenuOpen && strokes.length > 0 && (
+					{isSnapshotMenuOpen && drawingObjects.length > 0 && (
 						<div className="absolute bottom-16 right-3 z-30 w-44 overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/80 shadow-lg backdrop-blur">
 							<button
 								className="block w-full px-4 py-3 text-left text-sm font-medium text-zinc-100 transition hover:bg-zinc-800/80"
@@ -1256,13 +1638,26 @@ function App() {
 					<div className="flex items-center justify-center gap-3 overflow-x-auto">
 						<button
 							className={
-								mode === "draw" && selectedShape === null
+								mode === "draw" &&
+								toolMode === "draw" &&
+								selectedShape === null
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={enterDrawMode}
 						>
 							Draw
+						</button>
+
+						<button
+							className={
+								mode === "draw" && toolMode === "edit"
+									? ACTIVE_BUTTON_CLASS
+									: INACTIVE_BUTTON_CLASS
+							}
+							onClick={enterEditMode}
+						>
+							Edit
 						</button>
 
 						<button

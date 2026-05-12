@@ -1,4 +1,4 @@
-# How I Implemented Sound in Bifourcation
+# Sound Implementation
 
 ## Purpose
 
