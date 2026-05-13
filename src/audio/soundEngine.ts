@@ -69,6 +69,10 @@ const MASTER_GAIN = 0.28;
 const TWO_PI = Math.PI * 2;
 const MIDI_A0 = 21;
 const MIDI_C8 = 108;
+const MAPPED_LOW_ROOT_MIDI = 36; // C2
+const MAPPED_HIGH_ROOT_MIDI = 84; // C6, with final Do reaching C7
+const MAPPED_LOW_MIDI = MAPPED_LOW_ROOT_MIDI;
+const MAPPED_HIGH_MIDI = MAPPED_HIGH_ROOT_MIDI + 12;
 const SIZE_BUCKET_COUNT = 11;
 const MAX_ACTIVE_NOTES_PER_STROKE = 8;
 const MIN_NOTE_INTERVAL_SECONDS = 0.045;
@@ -220,16 +224,16 @@ function getMidiForDegreeAndSize({
 	degree: number;
 	sizeBucket: number;
 }) {
-	const usableLowRoot = 24; // C1
-	const usableHighRoot = 96; // C7
 	const octave01 = 1 - sizeBucket / Math.max(1, SIZE_BUCKET_COUNT - 1);
 	const rootMidi =
 		Math.round(
-			(usableLowRoot + octave01 * (usableHighRoot - usableLowRoot)) / 12,
+			(MAPPED_LOW_ROOT_MIDI +
+				octave01 * (MAPPED_HIGH_ROOT_MIDI - MAPPED_LOW_ROOT_MIDI)) /
+				12,
 		) * 12;
 	const interval = SOLFEGE_INTERVALS[degree % SOLFEGE_INTERVALS.length] ?? 0;
 
-	return clamp(rootMidi + interval, MIDI_A0, MIDI_C8);
+	return clamp(rootMidi + interval, MAPPED_LOW_MIDI, MAPPED_HIGH_MIDI);
 }
 
 function getPan(id: string) {
@@ -264,48 +268,32 @@ function getDetail(stroke: RotorSoundStrokeFrame) {
 }
 
 function getPitch01(midi: number) {
-	return clamp((midi - MIDI_A0) / (MIDI_C8 - MIDI_A0), 0, 1);
+	return clamp(
+		(midi - MAPPED_LOW_MIDI) / (MAPPED_HIGH_MIDI - MAPPED_LOW_MIDI),
+		0,
+		1,
+	);
 }
 
 function getPitchLoudnessCompensation(midi: number) {
 	const pitch01 = getPitch01(midi);
 
-	/*
-		Equal electrical amplitude does not feel equally loud across pitch.
-		This deliberately exaggerates the correction:
-		- low notes get noticeably lifted
-		- high notes get noticeably reduced
-	*/
 	return clamp(1.62 - pitch01 * 1.0, 0.52, 1.62);
 }
 
 function getPitchFilterCompensation(midi: number) {
 	const pitch01 = getPitch01(midi);
 
-	/*
-		High notes are perceived as sharper, so darken them more.
-		Low notes keep more body and presence.
-	*/
 	return clamp(1.14 - pitch01 * 0.38, 0.68, 1.14);
 }
 
 function getPitchDecayCompensation(midi: number) {
 	const pitch01 = getPitch01(midi);
 
-	/*
-		Low notes need more time to feel audible.
-		High notes should get out of the way faster.
-	*/
 	return clamp(1.28 - pitch01 * 0.58, 0.62, 1.28);
 }
 
 function getInstrumentSettings(view: BivectorSoundView, detail: number) {
-	/*
-		These are intentionally gentle. The pitch logic is already discrete
-		keyboard-note logic; the view only changes envelope/filter character.
-		Lower velocity, softer attacks, shorter decays, and lower filter cutoffs
-		keep sector crossings from stacking into brittle clipping.
-	*/
 	if (view === "blade") {
 		return {
 			oscillatorType: "triangle" as OscillatorType,
