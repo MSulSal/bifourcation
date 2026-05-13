@@ -22,6 +22,8 @@ type CapturedCanvas = {
 	canvas: HTMLCanvasElement;
 	rect: DOMRect;
 	opacity: number;
+	stackScore: number;
+	documentOrder: number;
 };
 
 const ASPECT_LABELS: Record<ExportAspect, string> = {
@@ -100,32 +102,90 @@ function waitUntil(targetTimeMs: number) {
 	});
 }
 
+function getNumericOpacity(value: string) {
+	const opacity = Number(value);
+
+	if (!Number.isFinite(opacity)) return 1;
+
+	return Math.min(1, Math.max(0, opacity));
+}
+
+function getEffectiveOpacity(element: HTMLElement, root: HTMLElement) {
+	let opacity = 1;
+	let current: HTMLElement | null = element;
+
+	while (current) {
+		const style = window.getComputedStyle(current);
+
+		if (
+			style.display === "none" ||
+			style.visibility === "hidden" ||
+			style.contentVisibility === "hidden"
+		) {
+			return 0;
+		}
+
+		opacity *= getNumericOpacity(style.opacity);
+
+		if (current === root) break;
+
+		current = current.parentElement;
+	}
+
+	return opacity;
+}
+
+function getEffectiveStackScore(element: HTMLElement, root: HTMLElement) {
+	let score = 0;
+	let depthWeight = 1;
+	let current: HTMLElement | null = element;
+
+	while (current) {
+		const style = window.getComputedStyle(current);
+		const zIndex = Number.parseInt(style.zIndex, 10);
+
+		if (Number.isFinite(zIndex)) {
+			score += zIndex * depthWeight;
+			depthWeight /= 1000;
+		}
+
+		if (current === root) break;
+
+		current = current.parentElement;
+	}
+
+	return score;
+}
+
 function getVisibleCanvases(root: HTMLElement): CapturedCanvas[] {
 	const canvases = Array.from(root.querySelectorAll("canvas"));
 
-	return canvases.flatMap(canvas => {
-		const rect = canvas.getBoundingClientRect();
-		const style = window.getComputedStyle(canvas);
-		const opacity = Number(style.opacity);
+	return canvases
+		.flatMap((canvas, documentOrder) => {
+			const rect = canvas.getBoundingClientRect();
+			const opacity = getEffectiveOpacity(canvas, root);
 
-		if (
-			rect.width <= 0 ||
-			rect.height <= 0 ||
-			style.display === "none" ||
-			style.visibility === "hidden" ||
-			opacity <= 0
-		) {
-			return [];
-		}
+			if (rect.width <= 0 || rect.height <= 0 || opacity <= 0) {
+				return [];
+			}
 
-		return [
-			{
-				canvas,
-				rect,
-				opacity: Number.isFinite(opacity) ? opacity : 1,
-			},
-		];
-	});
+			return [
+				{
+					canvas,
+					rect,
+					opacity,
+					stackScore: getEffectiveStackScore(canvas, root),
+					documentOrder,
+				},
+			];
+		})
+		.sort((a, b) => {
+			if (a.stackScore !== b.stackScore) {
+				return a.stackScore - b.stackScore;
+			}
+
+			return a.documentOrder - b.documentOrder;
+		});
 }
 
 function getCanvasUnion(canvases: CapturedCanvas[]) {
@@ -183,6 +243,7 @@ function drawCanvasesToExportCanvas({
 		outputContext.drawImage(item.canvas, x, y, width, height);
 	}
 
+	outputContext.globalAlpha = 1;
 	outputContext.restore();
 }
 
