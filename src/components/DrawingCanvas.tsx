@@ -6,7 +6,6 @@ import {
 import {
 	createId,
 	renderDrawingObject,
-	renderDrawingObjects,
 } from "../math/shapes";
 import type { DrawingObject, Point, Stroke } from "../types/geometry";
 
@@ -15,6 +14,7 @@ type DrawingCanvasProps = {
 	clearSignal: number;
 	penColor: string;
 	penWidth: number;
+	nonFillOpacity?: number;
 	isInteractive: boolean;
 	onCommitStroke: (stroke: Stroke) => void;
 };
@@ -36,6 +36,7 @@ export function DrawingCanvas({
 	clearSignal,
 	penColor,
 	penWidth,
+	nonFillOpacity = 1,
 	isInteractive,
 	onCommitStroke,
 }: DrawingCanvasProps) {
@@ -68,7 +69,20 @@ export function DrawingCanvas({
 
 		ctx.clearRect(0, 0, rect.width, rect.height);
 
-		renderDrawingObjects(ctx, objects);
+		for (const object of objects) {
+			if (object.type === "bucket-fill") {
+				renderDrawingObject(ctx, object);
+			}
+		}
+
+		ctx.save();
+		ctx.globalAlpha = Math.max(0, Math.min(1, nonFillOpacity));
+
+		for (const object of objects) {
+			if (object.type !== "bucket-fill") {
+				renderDrawingObject(ctx, object);
+			}
+		}
 
 		if (currentStroke && currentStroke.points.length >= 2) {
 			renderDrawingObject(ctx, {
@@ -77,6 +91,8 @@ export function DrawingCanvas({
 				stroke: currentStroke,
 			});
 		}
+
+		ctx.restore();
 	}
 
 	function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -175,7 +191,7 @@ export function DrawingCanvas({
 
 	useEffect(() => {
 		drawCanvas();
-	}, [objects]);
+	}, [objects, nonFillOpacity]);
 
 	useEffect(() => {
 		currentStrokeRef.current = null;

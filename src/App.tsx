@@ -1206,10 +1206,10 @@ function App() {
 		ctx.fillStyle = "#18181b";
 		ctx.fillRect(0, 0, rect.width, rect.height);
 
-		for (const [index, canvas] of canvases.entries()) {
+		for (const canvas of canvases) {
 			const canvasRect = canvas.getBoundingClientRect();
 
-			ctx.globalAlpha = index === 0 && isAnimationMode ? 0.2 : 1;
+			ctx.globalAlpha = 1;
 			ctx.drawImage(
 				canvas,
 				canvasRect.left - rect.left,
@@ -1594,7 +1594,6 @@ function App() {
 					<div
 						className={[
 							"h-full w-full transition-opacity duration-200",
-							isAnimationMode ? "opacity-20" : "opacity-100",
 							isCanvasInteractive
 								? "pointer-events-auto"
 								: "pointer-events-none",
@@ -1605,6 +1604,7 @@ function App() {
 							clearSignal={clearSignal}
 							penColor={penColor}
 							penWidth={penWidth}
+							nonFillOpacity={isAnimationMode ? 0.2 : 1}
 							isInteractive={isCanvasInteractive}
 							onCommitStroke={commitStroke}
 						/>

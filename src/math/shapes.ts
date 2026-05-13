@@ -576,10 +576,11 @@ function renderStrokePath(
 	}
 
 	if (options.fill) {
-		ctx.globalAlpha = options.fill.opacity;
+		const baseAlpha = ctx.globalAlpha;
+		ctx.globalAlpha = baseAlpha * options.fill.opacity;
 		ctx.fillStyle = options.fill.color;
 		ctx.fill();
-		ctx.globalAlpha = 1;
+		ctx.globalAlpha = baseAlpha;
 	}
 
 	if (shouldStroke) {
@@ -600,7 +601,7 @@ function renderBucketFill(
 	if (fill.spans.length === 0) return;
 
 	ctx.save();
-	ctx.globalAlpha = fill.opacity;
+	ctx.globalAlpha *= fill.opacity;
 	ctx.fillStyle = fill.color;
 
 	for (const span of fill.spans) {
