@@ -1826,7 +1826,7 @@ function App() {
 					</button>
 
 					<button
-						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsRotorDrawerOpen(value => !value);
 							setIsDrawerOpen(false);
@@ -1845,7 +1845,7 @@ function App() {
 					</button>
 
 					<button
-						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsShapeDrawerOpen(value => !value);
 							setIsDrawerOpen(false);
