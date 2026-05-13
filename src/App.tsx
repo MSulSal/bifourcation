@@ -594,6 +594,8 @@ function App() {
 	const [penWidth, setPenWidth] = useState(readStoredPenWidth);
 	const [colorHexDraft, setColorHexDraft] = useState(readStoredPenColor);
 
+	const [animationResetSignal, setAnimationResetSignal] = useState(0);
+
 	const drawingObjects = drawingHistory.present;
 	const currentRgb = useMemo(() => hexToRgb(penColor), [penColor]);
 
@@ -1335,6 +1337,60 @@ function App() {
 		soundVolume,
 	]);
 
+	useEffect(() => {
+		function handleExportAnimationControl(event: Event) {
+			const detail = (event as CustomEvent<{ action?: string }>).detail;
+
+			if (!detail?.action) return;
+
+			if (detail.action === "reset") {
+				setMode("animate");
+				setToolMode("draw");
+				setSelectedObjectId(null);
+				setContextMenu(null);
+				setIsSnapshotMenuOpen(false);
+				setIsAnimationPlaying(false);
+
+				soundEngineRef.current?.stop();
+				soundEngineRef.current?.resetClock();
+
+				setAnimationResetSignal(value => value + 1);
+				return;
+			}
+
+			if (detail.action === "play") {
+				if (!hasAnimationData) return;
+
+				setMode("animate");
+				setIsAnimationPlaying(true);
+
+				if (isSoundEnabled) {
+					void getSoundEngine().start();
+				}
+
+				return;
+			}
+
+			if (detail.action === "pause") {
+				setIsAnimationPlaying(false);
+				soundEngineRef.current?.stop();
+				soundEngineRef.current?.resetClock();
+			}
+		}
+
+		window.addEventListener(
+			"bifourcation:export-animation-control",
+			handleExportAnimationControl,
+		);
+
+		return () => {
+			window.removeEventListener(
+				"bifourcation:export-animation-control",
+				handleExportAnimationControl,
+			);
+		};
+	}, [hasAnimationData, isSoundEnabled]);
+
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
 			<section className="flex h-full w-full flex-col">
@@ -1429,6 +1485,7 @@ function App() {
 						termLimit={effectiveVisibleTermCount}
 						bivectorView={bivectorView}
 						animationTraceMode={animationTraceMode}
+						resetSignal={animationResetSignal}
 						onSoundFrame={handleRotorSoundFrame}
 					/>
 

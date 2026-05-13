@@ -108,91 +108,26 @@ function waitUntil(targetTimeMs: number) {
 	});
 }
 
-function isVisibleButton(button: HTMLButtonElement) {
-	const rect = button.getBoundingClientRect();
-	const style = window.getComputedStyle(button);
+type ExportAnimationControlAction = "reset" | "play" | "pause";
 
-	return (
-		rect.width > 0 &&
-		rect.height > 0 &&
-		style.display !== "none" &&
-		style.visibility !== "hidden" &&
-		Number(style.opacity) > 0 &&
-		!button.disabled
+function dispatchExportAnimationControl(action: ExportAnimationControlAction) {
+	window.dispatchEvent(
+		new CustomEvent("bifourcation:export-animation-control", {
+			detail: { action },
+		}),
 	);
 }
 
-function getButtonSearchText(button: HTMLButtonElement) {
-	return [
-		button.getAttribute("aria-label"),
-		button.getAttribute("title"),
-		button.textContent,
-	]
-		.filter(Boolean)
-		.join(" ")
-		.toLowerCase();
-}
-
-function findControlButton(searchTerms: string[]) {
-	const buttons = Array.from(document.querySelectorAll("button"));
-
-	return buttons.find(button => {
-		if (!isVisibleButton(button)) return false;
-
-		const searchText = getButtonSearchText(button);
-
-		return searchTerms.some(term => searchText.includes(term));
-	});
-}
-
-function clickControlButton(searchTerms: string[]) {
-	const button = findControlButton(searchTerms);
-
-	if (!button) return false;
-
-	button.click();
-
-	return true;
-}
-
 async function resetAnimationToBeginningForExport() {
-	const clickedDraw = clickControlButton([
-		"draw mode",
-		"drawing mode",
-		"switch to draw",
-		"draw",
-	]);
+	dispatchExportAnimationControl("reset");
+	await waitForFrames(4);
 
-	if (!clickedDraw) {
-		const clickedPause = clickControlButton(["pause animation", "pause"]);
-
-		if (!clickedPause) {
-			throw new Error(
-				"Could not find the draw or pause control needed to reset the animation.",
-			);
-		}
-	}
-
-	await waitForFrames(3);
-
-	const clickedPlay = clickControlButton([
-		"play animation",
-		"start animation",
-		"play",
-		"animate",
-	]);
-
-	if (!clickedPlay) {
-		throw new Error(
-			"Could not find the play control needed to start the export from the beginning.",
-		);
-	}
-
-	await waitForFrames(3);
+	dispatchExportAnimationControl("play");
+	await waitForFrames(4);
 }
 
 async function pauseAnimationAfterExport() {
-	clickControlButton(["pause animation", "pause"]);
+	dispatchExportAnimationControl("pause");
 	await waitForFrames(2);
 }
 

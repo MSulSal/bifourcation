@@ -22,6 +22,7 @@ type RotorCanvasProps = {
 	termLimit: number;
 	bivectorView: BivectorView;
 	animationTraceMode: AnimationTraceMode;
+	resetSignal?: number;
 	onSoundFrame?: (frame: RotorSoundFrame) => void;
 };
 
@@ -147,6 +148,7 @@ export function RotorCanvas({
 	termLimit,
 	bivectorView,
 	animationTraceMode,
+	resetSignal = 0,
 	onSoundFrame,
 }: RotorCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1336,6 +1338,12 @@ export function RotorCanvas({
 		animationTraceMode,
 		onSoundFrame,
 	]);
+
+	useEffect(() => {
+		stopAnimation();
+		clearOverlay();
+		resizeCanvasToDisplaySize();
+	}, [resetSignal]);
 
 	return (
 		<canvas
