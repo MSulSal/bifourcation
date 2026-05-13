@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Share2, X } from "lucide-react";
 
 type ExportAspect = "square" | "vertical" | "wide";
@@ -45,6 +45,10 @@ const QUALITY_HELP: Record<ExportQuality, string> = {
 	high: "Best default for social posting.",
 	ultra: "Sharper export, larger file.",
 };
+
+const AUDIO_EXPORT_BITRATE = 128_000;
+const EXPORT_SIZE_OVERHEAD_FACTOR = 1.18;
+const STORAGE_WARNING_RATIO = 0.85;
 
 async function loadMediabunny(): Promise<MediabunnyModule> {
 	return await import("mediabunny");
@@ -150,6 +154,23 @@ function waitUntil(targetTimeMs: number) {
 
 		check();
 	});
+}
+
+class ExportCanceledError extends Error {
+	constructor() {
+		super("Export canceled.");
+		this.name = "ExportCanceledError";
+	}
+}
+
+function throwIfCanceled(signal?: AbortSignal) {
+	if (signal?.aborted) {
+		throw new ExportCanceledError();
+	}
+}
+
+function isExportCanceledError(error: unknown): error is ExportCanceledError {
+	return error instanceof ExportCanceledError;
 }
 
 type ExportAnimationControlAction = "reset" | "play" | "pause";
@@ -388,6 +409,59 @@ function getExportFilename({
 	return `bifourcation-${aspect}-${quality}-${duration}s-${timestamp}.mp4`;
 }
 
+function estimateExportFileSizeBytes({
+	duration,
+	videoBitrate,
+	includeAudio,
+}: {
+	duration: ExportDuration;
+	videoBitrate: number;
+	includeAudio: boolean;
+}) {
+	const totalBitrate =
+		videoBitrate + (includeAudio ? AUDIO_EXPORT_BITRATE : 0);
+
+	return Math.ceil(
+		(duration * totalBitrate * EXPORT_SIZE_OVERHEAD_FACTOR) / 8,
+	);
+}
+
+function formatBytes(bytes: number) {
+	if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	const exponent = Math.min(
+		Math.floor(Math.log(bytes) / Math.log(1024)),
+		units.length - 1,
+	);
+	const scaled = bytes / 1024 ** exponent;
+
+	return `${scaled.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+}
+
+async function getAvailableStorageEstimateBytes() {
+	try {
+		if (
+			!("storage" in navigator) ||
+			typeof navigator.storage?.estimate !== "function"
+		) {
+			return null;
+		}
+
+		const estimate = await navigator.storage.estimate();
+		const usage = estimate.usage ?? 0;
+		const quota = estimate.quota ?? 0;
+
+		if (!Number.isFinite(usage) || !Number.isFinite(quota) || quota <= 0) {
+			return null;
+		}
+
+		return Math.max(0, quota - usage);
+	} catch {
+		return null;
+	}
+}
+
 function requestExportAudioTrack() {
 	let audioTrack: MediaStreamTrack | null = null;
 
@@ -409,12 +483,16 @@ async function exportVisibleAnimationToMp4({
 	quality,
 	duration,
 	onProgress,
+	signal,
 }: {
 	aspect: ExportAspect;
 	quality: ExportQuality;
 	duration: ExportDuration;
 	onProgress: (progress: number) => void;
+	signal?: AbortSignal;
 }) {
+	throwIfCanceled(signal);
+
 	const config = getExportConfig(aspect, quality);
 	const sourceRoot = getCaptureRoot();
 	const outputCanvas = document.createElement("canvas");
@@ -423,6 +501,7 @@ async function exportVisibleAnimationToMp4({
 	outputCanvas.height = config.height;
 
 	await resetAnimationToBeginningForExport();
+	throwIfCanceled(signal);
 
 	const {
 		BufferTarget,
@@ -457,7 +536,7 @@ async function exportVisibleAnimationToMp4({
 			>[0],
 			{
 				codec: "aac",
-				bitrate: 128_000,
+				bitrate: AUDIO_EXPORT_BITRATE,
 			},
 		);
 		audioSource.errorPromise.catch(() => {
@@ -472,19 +551,28 @@ async function exportVisibleAnimationToMp4({
 		comment: "Generated in-browser from a Bifourcation canvas animation.",
 	});
 
-	await output.start();
-
 	const totalFrames = Math.max(1, Math.round(duration * config.fps));
 	const frameDuration = 1 / config.fps;
-	const startedAt = performance.now();
+	let outputStarted = false;
+	let exportError: unknown = null;
 
 	try {
+		await output.start();
+		outputStarted = true;
+		throwIfCanceled(signal);
+
+		const startedAt = performance.now();
+
 		for (let frameIndex = 0; frameIndex < totalFrames; frameIndex += 1) {
+			throwIfCanceled(signal);
+
 			const timestampSeconds = frameIndex * frameDuration;
 			const targetTimeMs = startedAt + timestampSeconds * 1000;
 
 			await waitUntil(targetTimeMs);
+			throwIfCanceled(signal);
 			await waitForAnimationFrame();
+			throwIfCanceled(signal);
 
 			drawCanvasesToExportCanvas({
 				sourceRoot,
@@ -494,16 +582,30 @@ async function exportVisibleAnimationToMp4({
 			await videoSource.add(timestampSeconds, frameDuration, {
 				keyFrame: frameIndex % config.fps === 0,
 			});
+			throwIfCanceled(signal);
 
 			onProgress((frameIndex + 1) / totalFrames);
 		}
+	} catch (caughtError) {
+		exportError = caughtError;
 	} finally {
 		await pauseAnimationAfterExport();
+
+		videoSource.close();
+		audioSource?.close();
+
+		if (outputStarted) {
+			if (exportError || signal?.aborted) {
+				await output.cancel().catch(() => undefined);
+			} else {
+				await output.finalize();
+			}
+		}
 	}
 
-	videoSource.close();
-	audioSource?.close();
-	await output.finalize();
+	if (exportError) {
+		throw exportError;
+	}
 
 	if (!target.buffer) {
 		throw new Error(
@@ -525,12 +627,23 @@ export function VideoExportOverlay() {
 	const [isExporting, setIsExporting] = useState(false);
 	const [progress, setProgress] = useState(0);
 	const [error, setError] = useState<string | null>(null);
+	const [storageNotice, setStorageNotice] = useState<string | null>(null);
 	const [lastBlob, setLastBlob] = useState<Blob | null>(null);
 	const [lastFilename, setLastFilename] = useState<string | null>(null);
+	const exportAbortControllerRef = useRef<AbortController | null>(null);
 
 	const exportConfig = useMemo(
 		() => getExportConfig(aspect, quality),
 		[aspect, quality],
+	);
+	const estimatedExportBytes = useMemo(
+		() =>
+			estimateExportFileSizeBytes({
+				duration,
+				videoBitrate: exportConfig.videoBitrate,
+				includeAudio: true,
+			}),
+		[duration, exportConfig.videoBitrate],
 	);
 
 	useEffect(() => {
@@ -560,17 +673,58 @@ export function VideoExportOverlay() {
 		};
 	}, []);
 
+	useEffect(() => {
+		return () => {
+			exportAbortControllerRef.current?.abort();
+			exportAbortControllerRef.current = null;
+		};
+	}, []);
+
+	function cancelExport() {
+		exportAbortControllerRef.current?.abort();
+	}
+
+	function closePanel() {
+		if (isExporting) {
+			cancelExport();
+		}
+
+		setIsOpen(false);
+	}
+
 	async function runExport() {
 		setError(null);
+		setStorageNotice(null);
 		setProgress(0);
-		setIsExporting(true);
 
 		try {
+			const availableStorageBytes = await getAvailableStorageEstimateBytes();
+
+			if (availableStorageBytes !== null) {
+				if (estimatedExportBytes > availableStorageBytes) {
+					setError(
+						`Not enough storage estimated. Need about ${formatBytes(estimatedExportBytes)}, but only about ${formatBytes(availableStorageBytes)} is available.`,
+					);
+					return;
+				}
+
+				if (estimatedExportBytes > availableStorageBytes * STORAGE_WARNING_RATIO) {
+					setStorageNotice(
+						`Low available storage: export may fail. Estimated ${formatBytes(estimatedExportBytes)} file size.`,
+					);
+				}
+			}
+
+			const abortController = new AbortController();
+			exportAbortControllerRef.current = abortController;
+			setIsExporting(true);
+
 			const blob = await exportVisibleAnimationToMp4({
 				aspect,
 				quality,
 				duration,
 				onProgress: setProgress,
+				signal: abortController.signal,
 			});
 			const filename = getExportFilename({
 				aspect,
@@ -582,13 +736,18 @@ export function VideoExportOverlay() {
 			setLastFilename(filename);
 			downloadBlob(blob, filename);
 		} catch (caughtError) {
-			const message =
-				caughtError instanceof Error
-					? caughtError.message
-					: "The MP4 export failed.";
+			if (isExportCanceledError(caughtError)) {
+				setStorageNotice("Export canceled.");
+			} else {
+				const message =
+					caughtError instanceof Error
+						? caughtError.message
+						: "The MP4 export failed.";
 
-			setError(message);
+				setError(message);
+			}
 		} finally {
+			exportAbortControllerRef.current = null;
 			setIsExporting(false);
 		}
 	}
@@ -615,8 +774,8 @@ export function VideoExportOverlay() {
 	return (
 		<>
 			{isOpen && (
-				<section className="fixed bottom-16 right-3 z-[80] w-[min(24rem,calc(100vw-1.5rem))] rounded-3xl border border-zinc-700/80 bg-zinc-950/95 p-4 text-zinc-100 shadow-2xl">
-						<div className="mb-4 flex items-start justify-between gap-3">
+				<section className="fixed bottom-16 right-3 z-[80] flex max-h-[calc(100dvh-5rem)] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-3xl border border-zinc-700/80 bg-zinc-950/95 p-4 text-zinc-100 shadow-2xl">
+						<div className="mb-4 flex shrink-0 items-start justify-between gap-3">
 							<div>
 								<p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
 									Export
@@ -632,17 +791,16 @@ export function VideoExportOverlay() {
 							</div>
 
 							<button
-								className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-700 text-zinc-300 transition hover:bg-zinc-800"
+								className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-700 text-zinc-300 transition hover:bg-zinc-800"
 								type="button"
-								onClick={() => setIsOpen(false)}
+								onClick={closePanel}
 								aria-label="Close export panel"
-								disabled={isExporting}
 							>
-								<X className="h-4 w-4" aria-hidden="true" />
+								<X className="h-5 w-5" aria-hidden="true" />
 							</button>
 						</div>
 
-						<div className="space-y-4">
+						<div className="space-y-4 overflow-y-auto pr-1">
 							<div>
 								<p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
 									Format
@@ -756,6 +914,15 @@ export function VideoExportOverlay() {
 										Mbps
 									</span>
 								</div>
+
+								<div className="mt-2 flex items-center justify-between gap-3 text-sm">
+									<span className="text-zinc-400">
+										Est. size
+									</span>
+									<span className="font-mono text-zinc-100">
+										{formatBytes(estimatedExportBytes)}
+									</span>
+								</div>
 							</div>
 
 							{isExporting && (
@@ -776,6 +943,12 @@ export function VideoExportOverlay() {
 										/>
 									</div>
 								</div>
+							)}
+
+							{storageNotice && (
+								<p className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-3 text-sm leading-5 text-amber-100">
+									{storageNotice}
+								</p>
 							)}
 
 							{error && (
@@ -812,6 +985,16 @@ export function VideoExportOverlay() {
 									/>
 									Share last export
 								</button>
+
+								{isExporting && (
+									<button
+										className="flex h-12 items-center justify-center rounded-2xl border border-red-900/70 px-4 text-sm font-semibold text-red-200 transition hover:bg-red-950/50 sm:col-span-2"
+										type="button"
+										onClick={cancelExport}
+									>
+										Cancel export
+									</button>
+								)}
 							</div>
 
 							<p className="text-xs leading-5 text-zinc-600">
