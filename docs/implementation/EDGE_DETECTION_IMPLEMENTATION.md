@@ -1,4 +1,4 @@
-# How I Implemented Image Edge Detection in Bifourcation
+# Image Edge Detection Implementation
 
 ## Purpose
 

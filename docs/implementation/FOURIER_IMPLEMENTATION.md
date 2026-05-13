@@ -1,4 +1,4 @@
-# How I Implemented Fourier Reconstruction in Bifourcation
+# Fourier Reconstruction Implementation
 
 ## Purpose
 

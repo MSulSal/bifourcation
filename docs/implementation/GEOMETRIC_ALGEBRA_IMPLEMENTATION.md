@@ -1,4 +1,4 @@
-# How I Implemented Geometric Algebra in Bifourcation
+# Geometric Algebra Implementation
 
 ## Purpose
 
