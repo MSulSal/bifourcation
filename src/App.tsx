@@ -7,6 +7,7 @@ import {
 	type SetStateAction,
 } from "react";
 import {
+	ChevronUp,
 	Pause,
 	Pencil,
 	Play,
@@ -578,34 +579,6 @@ function StrokeWidthIcon() {
 				fill="none"
 				stroke="currentColor"
 				strokeWidth="4.2"
-				strokeLinecap="round"
-			/>
-		</svg>
-	);
-}
-
-function AnimationModeIcon() {
-	return (
-		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
-			<path
-				d="M8 10H24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2.1"
-				strokeLinecap="round"
-			/>
-			<path
-				d="M8 16H18"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2.1"
-				strokeLinecap="round"
-			/>
-			<path
-				d="M8 22H24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="2.1"
 				strokeLinecap="round"
 			/>
 		</svg>
@@ -1875,7 +1848,7 @@ function App() {
 
 					<button
 						data-floating-ui="true"
-						className="absolute right-3 top-[10.5rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsColorDrawerOpen(value => !value);
 							setIsStrokeDrawerOpen(false);
@@ -1899,7 +1872,7 @@ function App() {
 
 					<button
 						data-floating-ui="true"
-						className="absolute right-3 top-[13.75rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-[10.5rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsStrokeDrawerOpen(value => !value);
 							setIsColorDrawerOpen(false);
@@ -1920,7 +1893,7 @@ function App() {
 
 					<button
 						data-floating-ui="true"
-						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-3 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsRotorDrawerOpen(value => !value);
 							setIsColorDrawerOpen(false);
@@ -1941,7 +1914,7 @@ function App() {
 
 					<button
 						data-floating-ui="true"
-						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsShapeDrawerOpen(value => !value);
 							setIsColorDrawerOpen(false);
@@ -2533,7 +2506,7 @@ function App() {
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
-					<div className="flex items-center justify-center gap-3 overflow-x-auto">
+					<div className="flex items-center justify-center gap-3 overflow-x-auto overflow-y-visible">
 						<button
 							className={
 								mode === "draw" && toolMode === "draw"
@@ -2582,58 +2555,81 @@ function App() {
 							<BucketIcon />
 						</button>
 
-						<div
-							className="relative flex items-center"
-							data-floating-ui="true"
-						>
-							<button
-								className={
+						<div className="relative shrink-0" data-floating-ui="true">
+							<div
+								className={[
+									"flex h-12 w-12 overflow-hidden rounded-xl border transition",
 									isAnimationMode
-										? ACTIVE_BUTTON_CLASS
-										: INACTIVE_BUTTON_CLASS
-								}
-								disabled={!hasAnimationData}
-								onClick={toggleAnimation}
-								aria-label={
-									isAnimationPlaying ? "Pause" : "Animate"
-								}
-								title={isAnimationPlaying ? "Pause" : "Animate"}
+										? "border-zinc-50 bg-zinc-50 text-zinc-950"
+										: "border-zinc-700 text-zinc-200",
+									!hasAnimationData
+										? "opacity-40"
+										: "",
+								].join(" ")}
 							>
-								{isAnimationPlaying ? (
-									<Pause size={19} />
-								) : (
-									<Play size={19} />
-								)}
-							</button>
+								<button
+									className={[
+										"flex flex-[4] items-center justify-center transition",
+										isAnimationMode
+											? "hover:bg-zinc-200"
+											: "hover:bg-zinc-800",
+										!hasAnimationData
+											? "cursor-not-allowed"
+											: "",
+									].join(" ")}
+									disabled={!hasAnimationData}
+									onClick={toggleAnimation}
+									aria-label={
+										isAnimationPlaying ? "Pause" : "Animate"
+									}
+									title={isAnimationPlaying ? "Pause" : "Animate"}
+								>
+									{isAnimationPlaying ? (
+										<Pause size={19} />
+									) : (
+										<Play size={19} />
+									)}
+								</button>
 
-							<button
-								className="ml-1 flex h-12 w-8 items-center justify-center rounded-xl border border-zinc-700 text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600"
-								onClick={() =>
-									setIsAnimationStyleMenuOpen(
-										value => !value,
-									)
-								}
-								disabled={!hasAnimationData}
-								aria-label={
-									isAnimationStyleMenuOpen
-										? "Close animation style options"
-										: "Open animation style options"
-								}
-								title="Animation style"
-							>
-								<AnimationModeIcon />
-							</button>
+								<button
+									className={[
+										"flex flex-[1] items-center justify-center border-l transition",
+										isAnimationMode
+											? "border-zinc-300 hover:bg-zinc-200"
+											: "border-zinc-700 hover:bg-zinc-800",
+										!hasAnimationData
+											? "cursor-not-allowed"
+											: "",
+									].join(" ")}
+									onClick={() =>
+										setIsAnimationStyleMenuOpen(value => !value)
+									}
+									disabled={!hasAnimationData}
+									aria-label={
+										isAnimationStyleMenuOpen
+											? "Close animation style options"
+											: "Open animation style options"
+									}
+									title="Animation style"
+								>
+									<ChevronUp
+										size={10}
+										className={
+											isAnimationStyleMenuOpen
+												? "rotate-180 transition-transform"
+												: "transition-transform"
+										}
+									/>
+								</button>
+							</div>
 
 							{isAnimationStyleMenuOpen && (
 								<div
 									data-floating-ui="true"
-									className="absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950/95 shadow-lg backdrop-blur"
+									className="absolute bottom-full right-0 z-50 mb-2 overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950/95 shadow-lg backdrop-blur"
 								>
 									{(
-										[
-											"sequential",
-											"simultaneous",
-										] as const
+										["sequential", "simultaneous"] as const
 									).map(traceMode => (
 										<button
 											key={traceMode}
@@ -2644,9 +2640,7 @@ function App() {
 													: "text-zinc-100 hover:bg-zinc-800/80",
 											].join(" ")}
 											onClick={() =>
-												changeAnimationTraceMode(
-													traceMode,
-												)
+												changeAnimationTraceMode(traceMode)
 											}
 										>
 											{traceMode === "sequential"
