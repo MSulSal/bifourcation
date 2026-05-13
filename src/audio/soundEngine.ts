@@ -90,6 +90,42 @@ function midiToHz(midi: number) {
 	return 440 * 2 ** ((midi - 69) / 12);
 }
 
+function getPitchLoudnessCompensation(midi: number) {
+	/*
+		Equal MIDI amplitude does not sound equally loud. Very high notes cut
+		through sharply, while very low notes can disappear on laptop/phone
+		speakers. This compensation keeps the note identity unchanged while
+		balancing perceived loudness across the keyboard.
+	*/
+	if (midi <= 60) {
+		const lowAmount = clamp((60 - midi) / (60 - MIDI_A0), 0, 1);
+
+		return 1 + 0.9 * lowAmount ** 0.7;
+	}
+
+	const highAmount = clamp((midi - 60) / (MIDI_C8 - 60), 0, 1);
+
+	return 1 - 0.45 * highAmount ** 1.1;
+}
+
+function getPitchFilterFrequency(baseFrequency: number, midi: number) {
+	const highAmount = clamp((midi - 72) / (MIDI_C8 - 72), 0, 1);
+	const lowAmount = clamp((60 - midi) / (60 - MIDI_A0), 0, 1);
+
+	return clamp(
+		baseFrequency * (1 + lowAmount * 0.1) * (1 - highAmount * 0.38),
+		520,
+		5200,
+	);
+}
+
+function getPitchDecayScale(midi: number) {
+	const highAmount = clamp((midi - 72) / (MIDI_C8 - 72), 0, 1);
+	const lowAmount = clamp((60 - midi) / (60 - MIDI_A0), 0, 1);
+
+	return 1 + lowAmount * 0.16 - highAmount * 0.24;
+}
+
 function getAudioContextConstructor() {
 	return (
 		window.AudioContext ??
@@ -583,15 +619,24 @@ export class DrawingSoundEngine {
 				? context.createStereoPanner()
 				: null;
 
-		const velocity = settings.velocity * clamp(state.activity, 0, 1);
+		const pitchCompensation = getPitchLoudnessCompensation(state.heldMidi);
+		const velocity = clamp(
+			settings.velocity * pitchCompensation * clamp(state.activity, 0, 1),
+			0,
+			0.58,
+		);
 		const attackEnd = time + settings.attackSeconds;
-		const decayEnd = time + settings.decaySeconds;
+		const decayEnd =
+			time + settings.decaySeconds * getPitchDecayScale(state.heldMidi);
 
 		oscillator.type = settings.oscillatorType;
 		oscillator.frequency.setValueAtTime(midiToHz(state.heldMidi), time);
 
 		filter.type = "lowpass";
-		filter.frequency.setValueAtTime(settings.filterFrequency, time);
+		filter.frequency.setValueAtTime(
+			getPitchFilterFrequency(settings.filterFrequency, state.heldMidi),
+			time,
+		);
 		filter.Q.setValueAtTime(settings.filterQ, time);
 
 		noteGain.gain.setValueAtTime(0.0001, time);
