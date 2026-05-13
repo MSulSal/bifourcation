@@ -11,7 +11,6 @@ import {
 	Pencil,
 	Play,
 	Redo2,
-	Settings,
 	Trash2,
 	Undo2,
 	Upload,
@@ -557,6 +556,62 @@ function ShapeDrawerIcon() {
 	);
 }
 
+function StrokeWidthIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<path
+				d="M7 10H25"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.6"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M7 16H25"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.8"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M7 22H25"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="4.2"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
+
+function AnimationModeIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<path
+				d="M8 10H24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.1"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M8 16H18"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.1"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M8 22H24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.1"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
+
 function cloneDrawingObject(object: DrawingObject): DrawingObject | null {
 	if (object.type === "shape") {
 		const id = createId("shape");
@@ -608,12 +663,14 @@ function App() {
 	const [mode, setMode] = useState<AppMode>("draw");
 	const [toolMode, setToolMode] = useState<ToolMode>(readStoredToolMode);
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
-	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isColorDrawerOpen, setIsColorDrawerOpen] = useState(false);
+	const [isStrokeDrawerOpen, setIsStrokeDrawerOpen] = useState(false);
 	const [isRotorDrawerOpen, setIsRotorDrawerOpen] = useState(false);
 	const [isShapeDrawerOpen, setIsShapeDrawerOpen] = useState(false);
 	const [isVolumeDrawerOpen, setIsVolumeDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
+	const [isAnimationStyleMenuOpen, setIsAnimationStyleMenuOpen] =
+		useState(false);
 	const [bivectorView, setBivectorView] = useState<BivectorView>(
 		readStoredBivectorView,
 	);
@@ -724,12 +781,13 @@ function App() {
 	const canRedo = drawingHistory.future.length > 0;
 	const hasAudibleVolume = soundVolume > 0;
 	const hasOpenFloatingDrawer =
-		isDrawerOpen ||
 		isColorDrawerOpen ||
+		isStrokeDrawerOpen ||
 		isRotorDrawerOpen ||
 		isShapeDrawerOpen ||
 		isVolumeDrawerOpen ||
-		isSnapshotMenuOpen;
+		isSnapshotMenuOpen ||
+		isAnimationStyleMenuOpen;
 	const canDuplicateSelectedObject =
 		selectedObject?.type === "shape" || selectedObject?.type === "freehand";
 	const isSelectedObjectShape = selectedObject?.type === "shape";
@@ -957,12 +1015,14 @@ function App() {
 
 		setSelectedObjectId(null);
 		setContextMenu(null);
+		setIsAnimationStyleMenuOpen(false);
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
 	}
 
 	function changeAnimationTraceMode(nextMode: AnimationTraceMode) {
 		setAnimationTraceMode(nextMode);
+		setIsAnimationStyleMenuOpen(false);
 		pauseAnimationClock();
 
 		if (mode === "animate") {
@@ -1282,6 +1342,7 @@ function App() {
 	function openVideoExportPanel() {
 		setIsSnapshotMenuOpen(false);
 		setIsVolumeDrawerOpen(false);
+		setIsAnimationStyleMenuOpen(false);
 		window.dispatchEvent(new CustomEvent("bifourcation:open-video-export"));
 	}
 
@@ -1377,12 +1438,13 @@ function App() {
 				setSelectedObjectId(null);
 				setToolMode("draw");
 				setContextMenu(null);
-				setIsDrawerOpen(false);
 				setIsColorDrawerOpen(false);
+				setIsStrokeDrawerOpen(false);
 				setIsRotorDrawerOpen(false);
 				setIsShapeDrawerOpen(false);
 				setIsVolumeDrawerOpen(false);
 				setIsSnapshotMenuOpen(false);
+				setIsAnimationStyleMenuOpen(false);
 			}
 		}
 
@@ -1410,12 +1472,13 @@ function App() {
 			if (!(target instanceof Element)) return;
 			if (target.closest("[data-floating-ui='true']")) return;
 
-			setIsDrawerOpen(false);
 			setIsColorDrawerOpen(false);
+			setIsStrokeDrawerOpen(false);
 			setIsRotorDrawerOpen(false);
 			setIsShapeDrawerOpen(false);
 			setIsVolumeDrawerOpen(false);
 			setIsSnapshotMenuOpen(false);
+			setIsAnimationStyleMenuOpen(false);
 		}
 
 		window.addEventListener("pointerdown", handlePointerDown);
@@ -1812,38 +1875,14 @@ function App() {
 
 					<button
 						data-floating-ui="true"
-						className="absolute right-3 top-3 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
-						onClick={() => {
-							setIsDrawerOpen(value => !value);
-							setIsColorDrawerOpen(false);
-							setIsRotorDrawerOpen(false);
-							setIsShapeDrawerOpen(false);
-							setIsVolumeDrawerOpen(false);
-						}}
-						aria-label={
-							isDrawerOpen
-								? "Close settings drawer"
-								: "Open settings drawer"
-						}
-					>
-						<Settings
-							size={19}
-							className={[
-								"transition-transform duration-200",
-								isDrawerOpen ? "rotate-90" : "rotate-0",
-							].join(" ")}
-						/>
-					</button>
-
-					<button
-						data-floating-ui="true"
 						className="absolute right-3 top-[10.5rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsColorDrawerOpen(value => !value);
-							setIsDrawerOpen(false);
+							setIsStrokeDrawerOpen(false);
 							setIsRotorDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
+							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isColorDrawerOpen
@@ -1860,13 +1899,35 @@ function App() {
 
 					<button
 						data-floating-ui="true"
+						className="absolute right-3 top-[13.75rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						onClick={() => {
+							setIsStrokeDrawerOpen(value => !value);
+							setIsColorDrawerOpen(false);
+							setIsRotorDrawerOpen(false);
+							setIsShapeDrawerOpen(false);
+							setIsVolumeDrawerOpen(false);
+							setIsAnimationStyleMenuOpen(false);
+						}}
+						aria-label={
+							isStrokeDrawerOpen
+								? "Close stroke width drawer"
+								: "Open stroke width drawer"
+						}
+						title="Stroke width"
+					>
+						<StrokeWidthIcon />
+					</button>
+
+					<button
+						data-floating-ui="true"
 						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsRotorDrawerOpen(value => !value);
-							setIsDrawerOpen(false);
 							setIsColorDrawerOpen(false);
+							setIsStrokeDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
+							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isRotorDrawerOpen
@@ -1883,10 +1944,11 @@ function App() {
 						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsShapeDrawerOpen(value => !value);
-							setIsDrawerOpen(false);
 							setIsColorDrawerOpen(false);
+							setIsStrokeDrawerOpen(false);
 							setIsRotorDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
+							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isShapeDrawerOpen
@@ -1937,101 +1999,39 @@ function App() {
 						data-floating-ui="true"
 						className={[
 							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-72 overflow-y-auto transition-all duration-200",
-							isDrawerOpen
+							isStrokeDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
 						].join(" ")}
 					>
-						<div className="flex flex-col gap-3">
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									History
+						<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/80 p-3 shadow-lg backdrop-blur">
+							<div className="mb-3 flex items-center justify-between">
+								<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Stroke width
 								</p>
 
-								<div className="grid grid-cols-2 gap-2">
-									<button
-										className="flex items-center justify-center rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-										onClick={undo}
-										disabled={!canUndo}
-										aria-label="Undo"
-										title="Undo"
-									>
-										<Undo2 size={18} />
-									</button>
+								<span className="text-sm font-medium text-zinc-200">
+									{penWidth}px
+								</span>
+							</div>
 
-									<button
-										className="flex items-center justify-center rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-										onClick={redo}
-										disabled={!canRedo}
-										aria-label="Redo"
-										title="Redo"
-									>
-										<Redo2 size={18} />
-									</button>
-								</div>
-							</section>
+							<input
+								className="w-full accent-zinc-50"
+								type="range"
+								min={2}
+								max={16}
+								step={1}
+								value={penWidth}
+								onChange={event =>
+									setPenWidth(Number(event.target.value))
+								}
+							/>
 
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Animation
-								</p>
-
-								<div className="grid grid-cols-2 gap-2">
-									{(
-										["sequential", "simultaneous"] as const
-									).map(traceMode => (
-										<button
-											key={traceMode}
-											className={[
-												"rounded-xl border px-3 py-3 text-sm font-semibold transition",
-												animationTraceMode === traceMode
-													? "border-zinc-50 bg-zinc-50 text-zinc-950"
-													: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-											].join(" ")}
-											onClick={() =>
-												changeAnimationTraceMode(
-													traceMode,
-												)
-											}
-										>
-											{traceMode === "sequential"
-												? "Sequential"
-												: "Together"}
-										</button>
-									))}
-								</div>
-							</section>
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<div className="mb-3 flex items-center justify-between">
-									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Stroke width
-									</p>
-
-									<span className="text-sm font-medium text-zinc-200">
-										{penWidth}px
-									</span>
-								</div>
-
-								<input
-									className="w-full accent-zinc-50"
-									type="range"
-									min={2}
-									max={16}
-									step={1}
-									value={penWidth}
-									onChange={event =>
-										setPenWidth(Number(event.target.value))
-									}
-								/>
-
-								<p className="mt-3 text-xs leading-5 text-zinc-500">
-									Applies to freehand strokes, shape outlines,
-									and imported image traces.
-								</p>
-							</section>
-
-						</div>
+							<p className="mt-3 text-xs leading-5 text-zinc-500">
+								Applies to freehand strokes, shape outlines,
+								and imported image traces.
+							</p>
+						</section>
 					</div>
 
 					<div
@@ -2379,6 +2379,28 @@ function App() {
 						</section>
 					</div>
 
+					<div className="absolute bottom-16 left-3 z-30 flex gap-2">
+						<button
+							className="flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
+							onClick={undo}
+							disabled={!canUndo}
+							aria-label="Undo"
+							title="Undo"
+						>
+							<Undo2 size={18} />
+						</button>
+
+						<button
+							className="flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
+							onClick={redo}
+							disabled={!canRedo}
+							aria-label="Redo"
+							title="Redo"
+						>
+							<Redo2 size={18} />
+						</button>
+					</div>
+
 					<button
 						data-floating-ui="true"
 						className={[
@@ -2389,11 +2411,12 @@ function App() {
 						].join(" ")}
 						onClick={() => {
 							setIsVolumeDrawerOpen(value => !value);
-							setIsDrawerOpen(false);
 							setIsColorDrawerOpen(false);
+							setIsStrokeDrawerOpen(false);
 							setIsRotorDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsSnapshotMenuOpen(false);
+							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isVolumeDrawerOpen
@@ -2453,6 +2476,7 @@ function App() {
 						onClick={() => {
 							setIsSnapshotMenuOpen(value => !value);
 							setIsVolumeDrawerOpen(false);
+							setIsAnimationStyleMenuOpen(false);
 						}}
 						disabled={drawingObjects.length === 0}
 						aria-label="Open snapshot menu"
@@ -2516,7 +2540,10 @@ function App() {
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
-							onClick={enterDrawMode}
+							onClick={() => {
+								setIsAnimationStyleMenuOpen(false);
+								enterDrawMode();
+							}}
 							aria-label="Draw"
 							title="Draw"
 						>
@@ -2529,7 +2556,10 @@ function App() {
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
-							onClick={enterEditMode}
+							onClick={() => {
+								setIsAnimationStyleMenuOpen(false);
+								enterEditMode();
+							}}
 							aria-label="Edit"
 							title="Edit"
 						>
@@ -2542,36 +2572,98 @@ function App() {
 									? ACTIVE_BUTTON_CLASS
 									: INACTIVE_BUTTON_CLASS
 							}
-							onClick={enterFillMode}
+							onClick={() => {
+								setIsAnimationStyleMenuOpen(false);
+								enterFillMode();
+							}}
 							aria-label="Fill"
 							title="Fill"
 						>
 							<BucketIcon />
 						</button>
 
-						<button
-							className={
-								isAnimationMode
-									? ACTIVE_BUTTON_CLASS
-									: INACTIVE_BUTTON_CLASS
-							}
-							disabled={!hasAnimationData}
-							onClick={toggleAnimation}
-							aria-label={
-								isAnimationPlaying ? "Pause" : "Animate"
-							}
-							title={isAnimationPlaying ? "Pause" : "Animate"}
+						<div
+							className="relative flex items-center"
+							data-floating-ui="true"
 						>
-							{isAnimationPlaying ? (
-								<Pause size={19} />
-							) : (
-								<Play size={19} />
+							<button
+								className={
+									isAnimationMode
+										? ACTIVE_BUTTON_CLASS
+										: INACTIVE_BUTTON_CLASS
+								}
+								disabled={!hasAnimationData}
+								onClick={toggleAnimation}
+								aria-label={
+									isAnimationPlaying ? "Pause" : "Animate"
+								}
+								title={isAnimationPlaying ? "Pause" : "Animate"}
+							>
+								{isAnimationPlaying ? (
+									<Pause size={19} />
+								) : (
+									<Play size={19} />
+								)}
+							</button>
+
+							<button
+								className="ml-1 flex h-12 w-8 items-center justify-center rounded-xl border border-zinc-700 text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600"
+								onClick={() =>
+									setIsAnimationStyleMenuOpen(
+										value => !value,
+									)
+								}
+								disabled={!hasAnimationData}
+								aria-label={
+									isAnimationStyleMenuOpen
+										? "Close animation style options"
+										: "Open animation style options"
+								}
+								title="Animation style"
+							>
+								<AnimationModeIcon />
+							</button>
+
+							{isAnimationStyleMenuOpen && (
+								<div
+									data-floating-ui="true"
+									className="absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950/95 shadow-lg backdrop-blur"
+								>
+									{(
+										[
+											"sequential",
+											"simultaneous",
+										] as const
+									).map(traceMode => (
+										<button
+											key={traceMode}
+											className={[
+												"block min-w-32 px-4 py-3 text-left text-sm font-semibold transition",
+												animationTraceMode === traceMode
+													? "bg-zinc-50 text-zinc-950"
+													: "text-zinc-100 hover:bg-zinc-800/80",
+											].join(" ")}
+											onClick={() =>
+												changeAnimationTraceMode(
+													traceMode,
+												)
+											}
+										>
+											{traceMode === "sequential"
+												? "Sequential"
+												: "Parallel"}
+										</button>
+									))}
+								</div>
 							)}
-						</button>
+						</div>
 
 						<button
 							className={INACTIVE_BUTTON_CLASS}
-							onClick={clearEverything}
+							onClick={() => {
+								setIsAnimationStyleMenuOpen(false);
+								clearEverything();
+							}}
 							aria-label="Clear canvas"
 							title="Clear canvas"
 						>
