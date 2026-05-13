@@ -82,8 +82,6 @@ type VoiceOptions = {
 
 const MASTER_GAIN = 0.28;
 const TWO_PI = Math.PI * 2;
-const MIDI_A0 = 21;
-const MIDI_C8 = 108;
 const MAPPED_LOW_ROOT_MIDI = 36; // C2
 const MAPPED_HIGH_ROOT_MIDI = 84; // C6, with final Do reaching C7
 const MAPPED_LOW_MIDI = MAPPED_LOW_ROOT_MIDI;
