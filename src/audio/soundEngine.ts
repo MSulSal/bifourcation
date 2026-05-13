@@ -65,6 +65,21 @@ type WebAudioWindow = Window &
 		webkitAudioContext?: typeof AudioContext;
 	};
 
+type VoiceOptions = {
+	frequency: number;
+	pan: number;
+	gain: number;
+	attack: number;
+	decay: number;
+	filterFrequency: number;
+	filterQ: number;
+	oscillatorType: OscillatorType;
+	time: number;
+	detuneCents?: number;
+	delaySeconds?: number;
+	frequencyEndMultiplier?: number;
+};
+
 const MASTER_GAIN = 0.28;
 const TWO_PI = Math.PI * 2;
 const MIDI_A0 = 21;
@@ -74,7 +89,7 @@ const MAPPED_HIGH_ROOT_MIDI = 84; // C6, with final Do reaching C7
 const MAPPED_LOW_MIDI = MAPPED_LOW_ROOT_MIDI;
 const MAPPED_HIGH_MIDI = MAPPED_HIGH_ROOT_MIDI + 12;
 const SIZE_BUCKET_COUNT = 11;
-const MAX_ACTIVE_NOTES_PER_STROKE = 8;
+const MAX_ACTIVE_NOTES_PER_STROKE = 14;
 const MIN_NOTE_INTERVAL_SECONDS = 0.045;
 const SOLFEGE_INTERVALS = [0, 2, 4, 5, 7, 9, 11, 12];
 
@@ -580,6 +595,296 @@ export class DrawingSoundEngine {
 		state.activeNotes = [];
 	}
 
+	private createVoice({
+		frequency,
+		pan,
+		gain,
+		attack,
+		decay,
+		filterFrequency,
+		filterQ,
+		oscillatorType,
+		time,
+		detuneCents = 0,
+		delaySeconds = 0,
+		frequencyEndMultiplier = 1,
+	}: VoiceOptions) {
+		const context = this.context;
+		const masterGain = this.masterGain;
+		if (!context || !masterGain) return null;
+
+		const startAt = time + delaySeconds;
+		const attackEnd = startAt + attack;
+		const decayEnd = startAt + decay;
+
+		const oscillator = context.createOscillator();
+		const filter = context.createBiquadFilter();
+		const voiceGain = context.createGain();
+		const panNode =
+			typeof context.createStereoPanner === "function"
+				? context.createStereoPanner()
+				: null;
+
+		oscillator.type = oscillatorType;
+		oscillator.frequency.setValueAtTime(Math.max(20, frequency), startAt);
+
+		if (frequencyEndMultiplier !== 1) {
+			oscillator.frequency.exponentialRampToValueAtTime(
+				Math.max(20, frequency * frequencyEndMultiplier),
+				startAt + Math.max(0.02, Math.min(decay, 0.55)),
+			);
+		}
+
+		oscillator.detune.setValueAtTime(detuneCents, startAt);
+
+		filter.type = "lowpass";
+		filter.frequency.setValueAtTime(
+			clamp(filterFrequency, 120, 6200),
+			startAt,
+		);
+		filter.Q.setValueAtTime(filterQ, startAt);
+
+		voiceGain.gain.setValueAtTime(0.0001, startAt);
+		voiceGain.gain.linearRampToValueAtTime(
+			Math.max(0.0001, gain),
+			attackEnd,
+		);
+		voiceGain.gain.exponentialRampToValueAtTime(
+			0.0001,
+			Math.max(attackEnd + 0.045, decayEnd),
+		);
+
+		oscillator.connect(filter);
+		filter.connect(voiceGain);
+
+		if (panNode) {
+			panNode.pan.setValueAtTime(clamp(pan, -0.8, 0.8), startAt);
+			voiceGain.connect(panNode);
+			panNode.connect(masterGain);
+		} else {
+			voiceGain.connect(masterGain);
+		}
+
+		oscillator.start(startAt);
+		oscillator.stop(decayEnd + 0.14);
+
+		const activeNote: ActiveNote = {
+			source: oscillator,
+			filter,
+			gain: voiceGain,
+			panNode,
+			stopTime: decayEnd + 0.14,
+		};
+
+		oscillator.onended = () => {
+			oscillator.disconnect();
+			filter.disconnect();
+			voiceGain.disconnect();
+
+			if (panNode) {
+				panNode.disconnect();
+			}
+		};
+
+		return activeNote;
+	}
+
+	private createBladeOrnaments({
+		state,
+		baseFrequency,
+		baseVelocity,
+		filterFrequency,
+		time,
+	}: {
+		state: StrokeSoundState;
+		baseFrequency: number;
+		baseVelocity: number;
+		filterFrequency: number;
+		time: number;
+	}) {
+		const airGain = baseVelocity * 0.18;
+		const dropletGain = baseVelocity * 0.11;
+		const chirpFrequency = clamp(baseFrequency * 2.35, 420, 5200);
+		const dropletFrequency = clamp(baseFrequency * 3.02, 520, 5400);
+
+		const air = this.createVoice({
+			frequency: chirpFrequency,
+			pan: clamp(state.pan * 1.16, -0.68, 0.68),
+			gain: airGain,
+			attack: 0.012,
+			decay: 0.26,
+			filterFrequency: Math.min(5600, filterFrequency * 1.36),
+			filterQ: 0.36,
+			oscillatorType: "sine",
+			time,
+			detuneCents: 6,
+			frequencyEndMultiplier: 1.075,
+		});
+
+		const droplet = this.createVoice({
+			frequency: dropletFrequency,
+			pan: clamp(-state.pan * 0.72, -0.62, 0.62),
+			gain: dropletGain,
+			attack: 0.008,
+			decay: 0.42,
+			filterFrequency: Math.min(5200, filterFrequency * 1.18),
+			filterQ: 0.5,
+			oscillatorType: "triangle",
+			time,
+			delaySeconds: 0.034,
+			detuneCents: -5,
+			frequencyEndMultiplier: 0.94,
+		});
+
+		return [air, droplet].filter(note => note !== null);
+	}
+
+	private createDiskOrnaments({
+		state,
+		baseFrequency,
+		baseVelocity,
+		filterFrequency,
+		time,
+	}: {
+		state: StrokeSoundState;
+		baseFrequency: number;
+		baseVelocity: number;
+		filterFrequency: number;
+		time: number;
+	}) {
+		const bodyGain = baseVelocity * 0.32;
+		const upperBodyGain = baseVelocity * 0.1;
+
+		const body = this.createVoice({
+			frequency: clamp(baseFrequency * 0.5, 48, 1600),
+			pan: clamp(state.pan * 0.52, -0.42, 0.42),
+			gain: bodyGain,
+			attack: 0.06,
+			decay: 1.8,
+			filterFrequency: Math.min(1150, filterFrequency * 0.82),
+			filterQ: 0.7,
+			oscillatorType: "sine",
+			time,
+			frequencyEndMultiplier: 0.993,
+		});
+
+		const upperBody = this.createVoice({
+			frequency: clamp(baseFrequency * 1.5, 120, 2400),
+			pan: clamp(-state.pan * 0.36, -0.4, 0.4),
+			gain: upperBodyGain,
+			attack: 0.04,
+			decay: 1.05,
+			filterFrequency: Math.min(1450, filterFrequency * 0.95),
+			filterQ: 0.55,
+			oscillatorType: "sine",
+			time,
+			delaySeconds: 0.028,
+			frequencyEndMultiplier: 0.996,
+		});
+
+		return [body, upperBody].filter(note => note !== null);
+	}
+
+	private createCompanionOrnaments({
+		state,
+		baseFrequency,
+		baseVelocity,
+		filterFrequency,
+		time,
+	}: {
+		state: StrokeSoundState;
+		baseFrequency: number;
+		baseVelocity: number;
+		filterFrequency: number;
+		time: number;
+	}) {
+		const tineGain = baseVelocity * 0.22;
+		const answerGain = baseVelocity * 0.13;
+
+		const tine = this.createVoice({
+			frequency: clamp(baseFrequency * 2, 180, 5200),
+			pan: clamp(state.pan * 1.18, -0.72, 0.72),
+			gain: tineGain,
+			attack: 0.005,
+			decay: 0.52,
+			filterFrequency: Math.min(5200, filterFrequency * 1.35),
+			filterQ: 0.8,
+			oscillatorType: "triangle",
+			time,
+			detuneCents: 4,
+			frequencyEndMultiplier: 0.995,
+		});
+
+		const answer = this.createVoice({
+			frequency: clamp(baseFrequency * 1.5, 140, 4200),
+			pan: clamp(-state.pan * 0.86, -0.68, 0.68),
+			gain: answerGain,
+			attack: 0.009,
+			decay: 0.74,
+			filterFrequency: Math.min(4300, filterFrequency * 1.05),
+			filterQ: 0.62,
+			oscillatorType: "sine",
+			time,
+			delaySeconds: 0.045,
+			detuneCents: -4,
+			frequencyEndMultiplier: 0.997,
+		});
+
+		return [tine, answer].filter(note => note !== null);
+	}
+
+	private createViewOrnaments({
+		state,
+		baseFrequency,
+		baseVelocity,
+		filterFrequency,
+		time,
+	}: {
+		state: StrokeSoundState;
+		baseFrequency: number;
+		baseVelocity: number;
+		filterFrequency: number;
+		time: number;
+	}) {
+		if (state.view === "blade") {
+			return this.createBladeOrnaments({
+				state,
+				baseFrequency,
+				baseVelocity,
+				filterFrequency,
+				time,
+			});
+		}
+
+		if (state.view === "disk") {
+			return this.createDiskOrnaments({
+				state,
+				baseFrequency,
+				baseVelocity,
+				filterFrequency,
+				time,
+			});
+		}
+
+		return this.createCompanionOrnaments({
+			state,
+			baseFrequency,
+			baseVelocity,
+			filterFrequency,
+			time,
+		});
+	}
+
+	private trimActiveNotes(state: StrokeSoundState, time: number) {
+		while (state.activeNotes.length > MAX_ACTIVE_NOTES_PER_STROKE) {
+			const oldest = state.activeNotes.shift();
+
+			if (oldest) {
+				this.stopNote(oldest, time);
+			}
+		}
+	}
+
 	private triggerKeyboardNote(state: StrokeSoundState, time: number) {
 		const context = this.context;
 		const masterGain = this.masterGain;
@@ -590,7 +895,7 @@ export class DrawingSoundEngine {
 
 		this.cleanupFinishedNotes(state, time);
 
-		while (state.activeNotes.length >= MAX_ACTIVE_NOTES_PER_STROKE) {
+		while (state.activeNotes.length >= MAX_ACTIVE_NOTES_PER_STROKE - 3) {
 			const oldest = state.activeNotes.shift();
 
 			if (oldest) {
@@ -599,14 +904,6 @@ export class DrawingSoundEngine {
 		}
 
 		const settings = getInstrumentSettings(state.view, state.detail);
-		const oscillator = context.createOscillator();
-		const filter = context.createBiquadFilter();
-		const noteGain = context.createGain();
-		const panNode =
-			typeof context.createStereoPanner === "function"
-				? context.createStereoPanner()
-				: null;
-
 		const pitchGain = getPitchLoudnessCompensation(state.heldMidi);
 		const pitchFilter = getPitchFilterCompensation(state.heldMidi);
 		const pitchDecay = getPitchDecayCompensation(state.heldMidi);
@@ -614,63 +911,43 @@ export class DrawingSoundEngine {
 		const velocity =
 			settings.velocity * pitchGain * clamp(state.activity, 0, 1);
 
-		const attackEnd = time + settings.attackSeconds;
-		const decayEnd = time + settings.decaySeconds * pitchDecay;
+		const attack = settings.attackSeconds;
+		const decay = settings.decaySeconds * pitchDecay;
+		const baseFrequency = midiToHz(state.heldMidi);
 		const filterFrequency = clamp(
 			settings.filterFrequency * pitchFilter,
 			160,
 			6200,
 		);
 
-		oscillator.type = settings.oscillatorType;
-		oscillator.frequency.setValueAtTime(midiToHz(state.heldMidi), time);
+		const mainNote = this.createVoice({
+			frequency: baseFrequency,
+			pan: state.pan,
+			gain: velocity,
+			attack,
+			decay,
+			filterFrequency,
+			filterQ: settings.filterQ,
+			oscillatorType: settings.oscillatorType,
+			time,
+		});
 
-		filter.type = "lowpass";
-		filter.frequency.setValueAtTime(filterFrequency, time);
-		filter.Q.setValueAtTime(settings.filterQ, time);
-
-		noteGain.gain.setValueAtTime(0.0001, time);
-		noteGain.gain.linearRampToValueAtTime(
-			Math.max(0.0001, velocity),
-			attackEnd,
-		);
-		noteGain.gain.exponentialRampToValueAtTime(
-			0.0001,
-			Math.max(attackEnd + 0.05, decayEnd),
-		);
-
-		oscillator.connect(filter);
-		filter.connect(noteGain);
-
-		if (panNode) {
-			panNode.pan.setValueAtTime(clamp(state.pan, -0.8, 0.8), time);
-			noteGain.connect(panNode);
-			panNode.connect(masterGain);
-		} else {
-			noteGain.connect(masterGain);
+		if (mainNote) {
+			state.activeNotes.push(mainNote);
 		}
 
-		oscillator.start(time);
-		oscillator.stop(decayEnd + 0.12);
+		const ornaments = this.createViewOrnaments({
+			state,
+			baseFrequency,
+			baseVelocity: velocity,
+			filterFrequency,
+			time,
+		});
 
-		const activeNote: ActiveNote = {
-			source: oscillator,
-			filter,
-			gain: noteGain,
-			panNode,
-			stopTime: decayEnd + 0.12,
-		};
+		for (const ornament of ornaments) {
+			state.activeNotes.push(ornament);
+		}
 
-		state.activeNotes.push(activeNote);
-
-		oscillator.onended = () => {
-			oscillator.disconnect();
-			filter.disconnect();
-			noteGain.disconnect();
-
-			if (panNode) {
-				panNode.disconnect();
-			}
-		};
+		this.trimActiveNotes(state, time);
 	}
 }
