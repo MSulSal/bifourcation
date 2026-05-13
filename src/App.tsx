@@ -2506,7 +2506,7 @@ function App() {
 				</section>
 
 				<aside className="border-t border-zinc-800 bg-zinc-950 p-3">
-					<div className="flex items-center justify-center gap-3 overflow-x-auto overflow-y-visible">
+					<div className="flex items-center justify-center gap-3 overflow-visible">
 						<button
 							className={
 								mode === "draw" && toolMode === "draw"
@@ -2593,7 +2593,7 @@ function App() {
 
 								<button
 									className={[
-										"flex flex-[1] items-center justify-center border-l transition",
+										"flex min-w-[0.9rem] flex-[1] items-center justify-center border-l transition",
 										isAnimationMode
 											? "border-zinc-300 hover:bg-zinc-200"
 											: "border-zinc-700 hover:bg-zinc-800",
