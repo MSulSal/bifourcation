@@ -90,42 +90,6 @@ function midiToHz(midi: number) {
 	return 440 * 2 ** ((midi - 69) / 12);
 }
 
-function getPitchLoudnessCompensation(midi: number) {
-	/*
-		Equal MIDI amplitude does not sound equally loud. Very high notes cut
-		through sharply, while very low notes can disappear on laptop/phone
-		speakers. This compensation keeps the note identity unchanged while
-		balancing perceived loudness across the keyboard.
-	*/
-	if (midi <= 60) {
-		const lowAmount = clamp((60 - midi) / (60 - MIDI_A0), 0, 1);
-
-		return 1 + 0.9 * lowAmount ** 0.7;
-	}
-
-	const highAmount = clamp((midi - 60) / (MIDI_C8 - 60), 0, 1);
-
-	return 1 - 0.45 * highAmount ** 1.1;
-}
-
-function getPitchFilterFrequency(baseFrequency: number, midi: number) {
-	const highAmount = clamp((midi - 72) / (MIDI_C8 - 72), 0, 1);
-	const lowAmount = clamp((60 - midi) / (60 - MIDI_A0), 0, 1);
-
-	return clamp(
-		baseFrequency * (1 + lowAmount * 0.1) * (1 - highAmount * 0.38),
-		520,
-		5200,
-	);
-}
-
-function getPitchDecayScale(midi: number) {
-	const highAmount = clamp((midi - 72) / (MIDI_C8 - 72), 0, 1);
-	const lowAmount = clamp((60 - midi) / (60 - MIDI_A0), 0, 1);
-
-	return 1 + lowAmount * 0.16 - highAmount * 0.24;
-}
-
 function getAudioContextConstructor() {
 	return (
 		window.AudioContext ??
@@ -297,6 +261,42 @@ function getDetail(stroke: RotorSoundStrokeFrame) {
 		) / radiusSum;
 
 	return clamp(weightedFrequency / 128, 0, 1);
+}
+
+function getPitch01(midi: number) {
+	return clamp((midi - MIDI_A0) / (MIDI_C8 - MIDI_A0), 0, 1);
+}
+
+function getPitchLoudnessCompensation(midi: number) {
+	const pitch01 = getPitch01(midi);
+
+	/*
+		Equal electrical amplitude does not feel equally loud across pitch.
+		This deliberately exaggerates the correction:
+		- low notes get noticeably lifted
+		- high notes get noticeably reduced
+	*/
+	return clamp(1.62 - pitch01 * 1.0, 0.52, 1.62);
+}
+
+function getPitchFilterCompensation(midi: number) {
+	const pitch01 = getPitch01(midi);
+
+	/*
+		High notes are perceived as sharper, so darken them more.
+		Low notes keep more body and presence.
+	*/
+	return clamp(1.14 - pitch01 * 0.38, 0.68, 1.14);
+}
+
+function getPitchDecayCompensation(midi: number) {
+	const pitch01 = getPitch01(midi);
+
+	/*
+		Low notes need more time to feel audible.
+		High notes should get out of the way faster.
+	*/
+	return clamp(1.28 - pitch01 * 0.58, 0.62, 1.28);
 }
 
 function getInstrumentSettings(view: BivectorSoundView, detail: number) {
@@ -538,12 +538,12 @@ export class DrawingSoundEngine {
 		masterGain.gain.value = 0.0001;
 
 		masterFilter.type = "lowpass";
-		masterFilter.frequency.value = 6800;
+		masterFilter.frequency.value = 6200;
 		masterFilter.Q.value = 0.45;
 
-		compressor.threshold.value = -26;
+		compressor.threshold.value = -28;
 		compressor.knee.value = 18;
-		compressor.ratio.value = 5.0;
+		compressor.ratio.value = 5.5;
 		compressor.attack.value = 0.006;
 		compressor.release.value = 0.18;
 
@@ -577,8 +577,8 @@ export class DrawingSoundEngine {
 				gain.cancelScheduledValues(time);
 			}
 
-			gain.setTargetAtTime(0.0001, time, 0.035);
-			note.source.stop(time + 0.16);
+			gain.setTargetAtTime(0.0001, time, 0.04);
+			note.source.stop(time + 0.18);
 		} catch {
 			// The source may already have stopped.
 		}
@@ -619,24 +619,26 @@ export class DrawingSoundEngine {
 				? context.createStereoPanner()
 				: null;
 
-		const pitchCompensation = getPitchLoudnessCompensation(state.heldMidi);
-		const velocity = clamp(
-			settings.velocity * pitchCompensation * clamp(state.activity, 0, 1),
-			0,
-			0.58,
-		);
+		const pitchGain = getPitchLoudnessCompensation(state.heldMidi);
+		const pitchFilter = getPitchFilterCompensation(state.heldMidi);
+		const pitchDecay = getPitchDecayCompensation(state.heldMidi);
+
+		const velocity =
+			settings.velocity * pitchGain * clamp(state.activity, 0, 1);
+
 		const attackEnd = time + settings.attackSeconds;
-		const decayEnd =
-			time + settings.decaySeconds * getPitchDecayScale(state.heldMidi);
+		const decayEnd = time + settings.decaySeconds * pitchDecay;
+		const filterFrequency = clamp(
+			settings.filterFrequency * pitchFilter,
+			160,
+			6200,
+		);
 
 		oscillator.type = settings.oscillatorType;
 		oscillator.frequency.setValueAtTime(midiToHz(state.heldMidi), time);
 
 		filter.type = "lowpass";
-		filter.frequency.setValueAtTime(
-			getPitchFilterFrequency(settings.filterFrequency, state.heldMidi),
-			time,
-		);
+		filter.frequency.setValueAtTime(filterFrequency, time);
 		filter.Q.setValueAtTime(settings.filterQ, time);
 
 		noteGain.gain.setValueAtTime(0.0001, time);
