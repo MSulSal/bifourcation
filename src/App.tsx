@@ -723,6 +723,13 @@ function App() {
 	const canUndo = drawingHistory.past.length > 0;
 	const canRedo = drawingHistory.future.length > 0;
 	const hasAudibleVolume = soundVolume > 0;
+	const hasOpenFloatingDrawer =
+		isDrawerOpen ||
+		isColorDrawerOpen ||
+		isRotorDrawerOpen ||
+		isShapeDrawerOpen ||
+		isVolumeDrawerOpen ||
+		isSnapshotMenuOpen;
 	const canDuplicateSelectedObject =
 		selectedObject?.type === "shape" || selectedObject?.type === "freehand";
 	const isSelectedObjectShape = selectedObject?.type === "shape";
@@ -1395,6 +1402,30 @@ function App() {
 	}, []);
 
 	useEffect(() => {
+		if (!hasOpenFloatingDrawer) return;
+
+		function handlePointerDown(event: PointerEvent) {
+			const target = event.target;
+
+			if (!(target instanceof Element)) return;
+			if (target.closest("[data-floating-ui='true']")) return;
+
+			setIsDrawerOpen(false);
+			setIsColorDrawerOpen(false);
+			setIsRotorDrawerOpen(false);
+			setIsShapeDrawerOpen(false);
+			setIsVolumeDrawerOpen(false);
+			setIsSnapshotMenuOpen(false);
+		}
+
+		window.addEventListener("pointerdown", handlePointerDown);
+
+		return () => {
+			window.removeEventListener("pointerdown", handlePointerDown);
+		};
+	}, [hasOpenFloatingDrawer]);
+
+	useEffect(() => {
 		const engine = soundEngineRef.current;
 		const shouldRunSound =
 			isSoundEnabled &&
@@ -1780,6 +1811,7 @@ function App() {
 					)}
 
 					<button
+						data-floating-ui="true"
 						className="absolute right-3 top-3 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsDrawerOpen(value => !value);
@@ -1804,6 +1836,7 @@ function App() {
 					</button>
 
 					<button
+						data-floating-ui="true"
 						className="absolute right-3 top-[10.5rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsColorDrawerOpen(value => !value);
@@ -1826,6 +1859,7 @@ function App() {
 					</button>
 
 					<button
+						data-floating-ui="true"
 						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsRotorDrawerOpen(value => !value);
@@ -1845,6 +1879,7 @@ function App() {
 					</button>
 
 					<button
+						data-floating-ui="true"
 						className="absolute right-3 top-[7.25rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsShapeDrawerOpen(value => !value);
@@ -1899,6 +1934,7 @@ function App() {
 					)}
 
 					<div
+						data-floating-ui="true"
 						className={[
 							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-72 overflow-y-auto transition-all duration-200",
 							isDrawerOpen
@@ -1999,6 +2035,7 @@ function App() {
 					</div>
 
 					<div
+						data-floating-ui="true"
 						className={[
 							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-80 overflow-y-auto transition-all duration-200",
 							isColorDrawerOpen
@@ -2144,6 +2181,7 @@ function App() {
 					</div>
 
 					<div
+						data-floating-ui="true"
 						className={[
 							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-80 overflow-y-auto transition-all duration-200",
 							isShapeDrawerOpen
@@ -2233,6 +2271,7 @@ function App() {
 					</div>
 
 					<div
+						data-floating-ui="true"
 						className={[
 							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-80 overflow-y-auto transition-all duration-200",
 							isRotorDrawerOpen
@@ -2341,6 +2380,7 @@ function App() {
 					</div>
 
 					<button
+						data-floating-ui="true"
 						className={[
 							"absolute bottom-3 right-[7.25rem] z-30 flex h-11 w-11 items-center justify-center rounded-2xl border shadow-lg backdrop-blur transition",
 							hasAudibleVolume
@@ -2370,7 +2410,10 @@ function App() {
 					</button>
 
 					{isVolumeDrawerOpen && (
-						<div className="absolute bottom-16 right-[6.6rem] z-30 rounded-2xl border border-zinc-700/70 bg-zinc-950/80 px-3 py-3 shadow-lg backdrop-blur">
+						<div
+							data-floating-ui="true"
+							className="absolute bottom-16 right-[6.6rem] z-30 rounded-2xl border border-zinc-700/70 bg-zinc-950/80 px-3 py-3 shadow-lg backdrop-blur"
+						>
 							<div className="mb-2 text-center text-xs font-semibold text-zinc-200">
 								{Math.round(soundVolume * 100)}%
 							</div>
@@ -2390,15 +2433,11 @@ function App() {
 									}
 								/>
 							</div>
-
-							<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-								<span>0</span>
-								<span>100</span>
-							</div>
 						</div>
 					)}
 
 					<button
+						data-floating-ui="true"
 						className="absolute bottom-3 right-16 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
 						onClick={() => imageInputRef.current?.click()}
 						disabled={isTracingImage}
@@ -2409,6 +2448,7 @@ function App() {
 					</button>
 
 					<button
+						data-floating-ui="true"
 						className="absolute bottom-3 right-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
 						onClick={() => {
 							setIsSnapshotMenuOpen(value => !value);
@@ -2434,7 +2474,10 @@ function App() {
 					</button>
 
 					{isSnapshotMenuOpen && drawingObjects.length > 0 && (
-						<div className="absolute bottom-16 right-3 z-30 w-44 overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/80 shadow-lg backdrop-blur">
+						<div
+							data-floating-ui="true"
+							className="absolute bottom-16 right-3 z-30 w-44 overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/80 shadow-lg backdrop-blur"
+						>
 							<button
 								className="block w-full px-4 py-3 text-left text-sm font-medium text-zinc-100 transition hover:bg-zinc-800/80"
 								onClick={openVideoExportPanel}

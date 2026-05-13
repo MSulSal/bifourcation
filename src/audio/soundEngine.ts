@@ -87,6 +87,15 @@ const MAPPED_HIGH_ROOT_MIDI = 84; // C6, with final Do reaching C7
 const MAPPED_LOW_MIDI = MAPPED_LOW_ROOT_MIDI;
 const MAPPED_HIGH_MIDI = MAPPED_HIGH_ROOT_MIDI + 12;
 const SIZE_BUCKET_COUNT = 11;
+const MOBILE_SCREEN_MAX_WIDTH = 640;
+const MOBILE_OCTAVE_COUNT = 3;
+const MOBILE_HIGHEST_OCTAVE_MAX_COVERAGE = 0.2;
+const MOBILE_LOWEST_OCTAVE_MIN_COVERAGE = 0.75;
+const MOBILE_LOW_ROOT_MIDI = 36; // C2
+const MOBILE_HIGH_ROOT_MIDI =
+	MOBILE_LOW_ROOT_MIDI + (MOBILE_OCTAVE_COUNT - 1) * 12; // C4
+const MOBILE_LOW_MIDI = MOBILE_LOW_ROOT_MIDI;
+const MOBILE_HIGH_MIDI = MOBILE_HIGH_ROOT_MIDI + 12; // C5
 const MAX_ACTIVE_NOTES_PER_STROKE = 14;
 const MIN_NOTE_INTERVAL_SECONDS = 0.045;
 const SOLFEGE_INTERVALS = [0, 2, 4, 5, 7, 9, 11, 12];
@@ -177,12 +186,26 @@ function getSizeRatio(stroke: RotorSoundStrokeFrame, frame: RotorSoundFrame) {
 	return clamp(Math.max(areaRatio, lengthAreaProxy), 0, 1);
 }
 
+function getAreaCoverageRatio(
+	stroke: RotorSoundStrokeFrame,
+	frame: RotorSoundFrame,
+) {
+	const bounds = getPathBounds(stroke.path);
+	const canvasArea = Math.max(1, frame.canvasWidth * frame.canvasHeight);
+
+	return clamp(bounds.area / canvasArea, 0, 1);
+}
+
 function getSizeBucket(stroke: RotorSoundStrokeFrame, frame: RotorSoundFrame) {
 	return clamp(
 		Math.floor(getSizeRatio(stroke, frame) * SIZE_BUCKET_COUNT),
 		0,
 		SIZE_BUCKET_COUNT - 1,
 	);
+}
+
+function isSmallScreenFrame(frame: RotorSoundFrame) {
+	return Math.min(frame.canvasWidth, frame.canvasHeight) <= MOBILE_SCREEN_MAX_WIDTH;
 }
 
 function getDegreeFromAngle(angle: number) {
@@ -233,10 +256,35 @@ function getRotorVectorAngle(stroke: RotorSoundStrokeFrame) {
 function getMidiForDegreeAndSize({
 	degree,
 	sizeBucket,
+	stroke,
+	frame,
 }: {
 	degree: number;
 	sizeBucket: number;
+	stroke: RotorSoundStrokeFrame;
+	frame: RotorSoundFrame;
 }) {
+	if (isSmallScreenFrame(frame)) {
+		const interval =
+			SOLFEGE_INTERVALS[degree % SOLFEGE_INTERVALS.length] ?? 0;
+		const areaCoverage = getAreaCoverageRatio(stroke, frame);
+		const octave01 = clamp(
+			(MOBILE_LOWEST_OCTAVE_MIN_COVERAGE - areaCoverage) /
+				(MOBILE_LOWEST_OCTAVE_MIN_COVERAGE -
+					MOBILE_HIGHEST_OCTAVE_MAX_COVERAGE),
+			0,
+			1,
+		);
+		const rootMidi =
+			Math.round(
+				(MOBILE_LOW_ROOT_MIDI +
+					octave01 * (MOBILE_HIGH_ROOT_MIDI - MOBILE_LOW_ROOT_MIDI)) /
+					12,
+			) * 12;
+
+		return clamp(rootMidi + interval, MOBILE_LOW_MIDI, MOBILE_HIGH_MIDI);
+	}
+
 	const octave01 = 1 - sizeBucket / Math.max(1, SIZE_BUCKET_COUNT - 1);
 	const rootMidi =
 		Math.round(
@@ -452,7 +500,12 @@ export class DrawingSoundEngine {
 
 			const degree = getDegreeFromAngle(angle);
 			const sizeBucket = getSizeBucket(stroke, frame);
-			const midi = getMidiForDegreeAndSize({ degree, sizeBucket });
+			const midi = getMidiForDegreeAndSize({
+				degree,
+				sizeBucket,
+				stroke,
+				frame,
+			});
 			const existing = this.states.get(stroke.id);
 
 			if (existing) {
