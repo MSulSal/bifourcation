@@ -7,7 +7,8 @@ import {
 	type SetStateAction,
 } from "react";
 import {
-	ChevronUp,
+	ArrowDown01,
+	ArrowDownFromLine,
 	Pause,
 	Pencil,
 	Play,
@@ -642,8 +643,6 @@ function App() {
 	const [isShapeDrawerOpen, setIsShapeDrawerOpen] = useState(false);
 	const [isVolumeDrawerOpen, setIsVolumeDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
-	const [isAnimationStyleMenuOpen, setIsAnimationStyleMenuOpen] =
-		useState(false);
 	const [bivectorView, setBivectorView] = useState<BivectorView>(
 		readStoredBivectorView,
 	);
@@ -759,8 +758,7 @@ function App() {
 		isRotorDrawerOpen ||
 		isShapeDrawerOpen ||
 		isVolumeDrawerOpen ||
-		isSnapshotMenuOpen ||
-		isAnimationStyleMenuOpen;
+		isSnapshotMenuOpen;
 	const canDuplicateSelectedObject =
 		selectedObject?.type === "shape" || selectedObject?.type === "freehand";
 	const isSelectedObjectShape = selectedObject?.type === "shape";
@@ -988,19 +986,25 @@ function App() {
 
 		setSelectedObjectId(null);
 		setContextMenu(null);
-		setIsAnimationStyleMenuOpen(false);
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
 	}
 
 	function changeAnimationTraceMode(nextMode: AnimationTraceMode) {
 		setAnimationTraceMode(nextMode);
-		setIsAnimationStyleMenuOpen(false);
 		pauseAnimationClock();
 
 		if (mode === "animate") {
 			setMode("animate");
 		}
+	}
+
+	function toggleAnimationTraceMode() {
+		changeAnimationTraceMode(
+			animationTraceMode === "sequential"
+				? "simultaneous"
+				: "sequential",
+		);
 	}
 
 	function changeVisibleTermCount(nextCount: number) {
@@ -1315,7 +1319,6 @@ function App() {
 	function openVideoExportPanel() {
 		setIsSnapshotMenuOpen(false);
 		setIsVolumeDrawerOpen(false);
-		setIsAnimationStyleMenuOpen(false);
 		window.dispatchEvent(new CustomEvent("bifourcation:open-video-export"));
 	}
 
@@ -1417,7 +1420,6 @@ function App() {
 				setIsShapeDrawerOpen(false);
 				setIsVolumeDrawerOpen(false);
 				setIsSnapshotMenuOpen(false);
-				setIsAnimationStyleMenuOpen(false);
 			}
 		}
 
@@ -1451,7 +1453,6 @@ function App() {
 			setIsShapeDrawerOpen(false);
 			setIsVolumeDrawerOpen(false);
 			setIsSnapshotMenuOpen(false);
-			setIsAnimationStyleMenuOpen(false);
 		}
 
 		window.addEventListener("pointerdown", handlePointerDown);
@@ -1855,7 +1856,6 @@ function App() {
 							setIsRotorDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
-							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isColorDrawerOpen
@@ -1879,7 +1879,6 @@ function App() {
 							setIsRotorDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
-							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isStrokeDrawerOpen
@@ -1893,6 +1892,32 @@ function App() {
 
 					<button
 						data-floating-ui="true"
+						className="absolute right-3 top-[13.75rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						onClick={() => {
+							setIsColorDrawerOpen(false);
+							setIsStrokeDrawerOpen(false);
+							setIsRotorDrawerOpen(false);
+							setIsShapeDrawerOpen(false);
+							setIsVolumeDrawerOpen(false);
+							setIsSnapshotMenuOpen(false);
+							toggleAnimationTraceMode();
+						}}
+						aria-label={`Toggle animation style (currently ${animationTraceMode === "sequential" ? "sequential" : "parallel"})`}
+						title={
+							animationTraceMode === "sequential"
+								? "Sequential animation"
+								: "Parallel animation"
+						}
+					>
+						{animationTraceMode === "sequential" ? (
+							<ArrowDown01 size={18} />
+						) : (
+							<ArrowDownFromLine size={18} />
+						)}
+					</button>
+
+					<button
+						data-floating-ui="true"
 						className="absolute right-3 top-3 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsRotorDrawerOpen(value => !value);
@@ -1900,7 +1925,6 @@ function App() {
 							setIsStrokeDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
-							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isRotorDrawerOpen
@@ -1921,7 +1945,6 @@ function App() {
 							setIsStrokeDrawerOpen(false);
 							setIsRotorDrawerOpen(false);
 							setIsVolumeDrawerOpen(false);
-							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isShapeDrawerOpen
@@ -2389,7 +2412,6 @@ function App() {
 							setIsRotorDrawerOpen(false);
 							setIsShapeDrawerOpen(false);
 							setIsSnapshotMenuOpen(false);
-							setIsAnimationStyleMenuOpen(false);
 						}}
 						aria-label={
 							isVolumeDrawerOpen
@@ -2449,7 +2471,6 @@ function App() {
 						onClick={() => {
 							setIsSnapshotMenuOpen(value => !value);
 							setIsVolumeDrawerOpen(false);
-							setIsAnimationStyleMenuOpen(false);
 						}}
 						disabled={drawingObjects.length === 0}
 						aria-label="Open snapshot menu"
@@ -2514,7 +2535,6 @@ function App() {
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={() => {
-								setIsAnimationStyleMenuOpen(false);
 								enterDrawMode();
 							}}
 							aria-label="Draw"
@@ -2530,7 +2550,6 @@ function App() {
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={() => {
-								setIsAnimationStyleMenuOpen(false);
 								enterEditMode();
 							}}
 							aria-label="Edit"
@@ -2546,7 +2565,6 @@ function App() {
 									: INACTIVE_BUTTON_CLASS
 							}
 							onClick={() => {
-								setIsAnimationStyleMenuOpen(false);
 								enterFillMode();
 							}}
 							aria-label="Fill"
@@ -2555,107 +2573,29 @@ function App() {
 							<BucketIcon />
 						</button>
 
-						<div className="relative shrink-0" data-floating-ui="true">
-							<div
-								className={[
-									"flex h-12 w-12 overflow-hidden rounded-xl border transition",
-									isAnimationMode
-										? "border-zinc-50 bg-zinc-50 text-zinc-950"
-										: "border-zinc-700 text-zinc-200",
-									!hasAnimationData
-										? "opacity-40"
-										: "",
-								].join(" ")}
-							>
-								<button
-									className={[
-										"flex flex-[4] items-center justify-center transition",
-										isAnimationMode
-											? "hover:bg-zinc-200"
-											: "hover:bg-zinc-800",
-										!hasAnimationData
-											? "cursor-not-allowed"
-											: "",
-									].join(" ")}
-									disabled={!hasAnimationData}
-									onClick={toggleAnimation}
-									aria-label={
-										isAnimationPlaying ? "Pause" : "Animate"
-									}
-									title={isAnimationPlaying ? "Pause" : "Animate"}
-								>
-									{isAnimationPlaying ? (
-										<Pause size={19} />
-									) : (
-										<Play size={19} />
-									)}
-								</button>
-
-								<button
-									className={[
-										"flex min-w-[0.9rem] flex-[1] items-center justify-center border-l transition",
-										isAnimationMode
-											? "border-zinc-300 hover:bg-zinc-200"
-											: "border-zinc-700 hover:bg-zinc-800",
-										!hasAnimationData
-											? "cursor-not-allowed"
-											: "",
-									].join(" ")}
-									onClick={() =>
-										setIsAnimationStyleMenuOpen(value => !value)
-									}
-									disabled={!hasAnimationData}
-									aria-label={
-										isAnimationStyleMenuOpen
-											? "Close animation style options"
-											: "Open animation style options"
-									}
-									title="Animation style"
-								>
-									<ChevronUp
-										size={10}
-										className={
-											isAnimationStyleMenuOpen
-												? "rotate-180 transition-transform"
-												: "transition-transform"
-										}
-									/>
-								</button>
-							</div>
-
-							{isAnimationStyleMenuOpen && (
-								<div
-									data-floating-ui="true"
-									className="absolute bottom-full right-0 z-50 mb-2 overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950/95 shadow-lg backdrop-blur"
-								>
-									{(
-										["sequential", "simultaneous"] as const
-									).map(traceMode => (
-										<button
-											key={traceMode}
-											className={[
-												"block min-w-32 px-4 py-3 text-left text-sm font-semibold transition",
-												animationTraceMode === traceMode
-													? "bg-zinc-50 text-zinc-950"
-													: "text-zinc-100 hover:bg-zinc-800/80",
-											].join(" ")}
-											onClick={() =>
-												changeAnimationTraceMode(traceMode)
-											}
-										>
-											{traceMode === "sequential"
-												? "Sequential"
-												: "Parallel"}
-										</button>
-									))}
-								</div>
+						<button
+							className={
+								isAnimationMode
+									? ACTIVE_BUTTON_CLASS
+									: INACTIVE_BUTTON_CLASS
+							}
+							disabled={!hasAnimationData}
+							onClick={toggleAnimation}
+							aria-label={
+								isAnimationPlaying ? "Pause" : "Animate"
+							}
+							title={isAnimationPlaying ? "Pause" : "Animate"}
+						>
+							{isAnimationPlaying ? (
+								<Pause size={19} />
+							) : (
+								<Play size={19} />
 							)}
-						</div>
+						</button>
 
 						<button
 							className={INACTIVE_BUTTON_CLASS}
 							onClick={() => {
-								setIsAnimationStyleMenuOpen(false);
 								clearEverything();
 							}}
 							aria-label="Clear canvas"
