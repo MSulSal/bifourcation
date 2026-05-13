@@ -87,6 +87,12 @@ function waitForAnimationFrame() {
 	});
 }
 
+async function waitForFrames(frameCount: number) {
+	for (let index = 0; index < frameCount; index += 1) {
+		await waitForAnimationFrame();
+	}
+}
+
 function waitUntil(targetTimeMs: number) {
 	return new Promise<void>(resolve => {
 		function check() {
@@ -100,6 +106,94 @@ function waitUntil(targetTimeMs: number) {
 
 		check();
 	});
+}
+
+function isVisibleButton(button: HTMLButtonElement) {
+	const rect = button.getBoundingClientRect();
+	const style = window.getComputedStyle(button);
+
+	return (
+		rect.width > 0 &&
+		rect.height > 0 &&
+		style.display !== "none" &&
+		style.visibility !== "hidden" &&
+		Number(style.opacity) > 0 &&
+		!button.disabled
+	);
+}
+
+function getButtonSearchText(button: HTMLButtonElement) {
+	return [
+		button.getAttribute("aria-label"),
+		button.getAttribute("title"),
+		button.textContent,
+	]
+		.filter(Boolean)
+		.join(" ")
+		.toLowerCase();
+}
+
+function findControlButton(searchTerms: string[]) {
+	const buttons = Array.from(document.querySelectorAll("button"));
+
+	return buttons.find(button => {
+		if (!isVisibleButton(button)) return false;
+
+		const searchText = getButtonSearchText(button);
+
+		return searchTerms.some(term => searchText.includes(term));
+	});
+}
+
+function clickControlButton(searchTerms: string[]) {
+	const button = findControlButton(searchTerms);
+
+	if (!button) return false;
+
+	button.click();
+
+	return true;
+}
+
+async function resetAnimationToBeginningForExport() {
+	const clickedDraw = clickControlButton([
+		"draw mode",
+		"drawing mode",
+		"switch to draw",
+		"draw",
+	]);
+
+	if (!clickedDraw) {
+		const clickedPause = clickControlButton(["pause animation", "pause"]);
+
+		if (!clickedPause) {
+			throw new Error(
+				"Could not find the draw or pause control needed to reset the animation.",
+			);
+		}
+	}
+
+	await waitForFrames(3);
+
+	const clickedPlay = clickControlButton([
+		"play animation",
+		"start animation",
+		"play",
+		"animate",
+	]);
+
+	if (!clickedPlay) {
+		throw new Error(
+			"Could not find the play control needed to start the export from the beginning.",
+		);
+	}
+
+	await waitForFrames(3);
+}
+
+async function pauseAnimationAfterExport() {
+	clickControlButton(["pause animation", "pause"]);
+	await waitForFrames(2);
 }
 
 function getNumericOpacity(value: string) {
@@ -333,6 +427,8 @@ async function exportVisibleAnimationToMp4({
 	outputCanvas.width = config.width;
 	outputCanvas.height = config.height;
 
+	await resetAnimationToBeginningForExport();
+
 	const target = new BufferTarget();
 	const output = new Output({
 		format: new Mp4OutputFormat(),
@@ -358,23 +454,27 @@ async function exportVisibleAnimationToMp4({
 	const frameDuration = 1 / config.fps;
 	const startedAt = performance.now();
 
-	for (let frameIndex = 0; frameIndex < totalFrames; frameIndex += 1) {
-		const timestampSeconds = frameIndex * frameDuration;
-		const targetTimeMs = startedAt + timestampSeconds * 1000;
+	try {
+		for (let frameIndex = 0; frameIndex < totalFrames; frameIndex += 1) {
+			const timestampSeconds = frameIndex * frameDuration;
+			const targetTimeMs = startedAt + timestampSeconds * 1000;
 
-		await waitUntil(targetTimeMs);
-		await waitForAnimationFrame();
+			await waitUntil(targetTimeMs);
+			await waitForAnimationFrame();
 
-		drawCanvasesToExportCanvas({
-			sourceRoot,
-			outputCanvas,
-		});
+			drawCanvasesToExportCanvas({
+				sourceRoot,
+				outputCanvas,
+			});
 
-		await videoSource.add(timestampSeconds, frameDuration, {
-			keyFrame: frameIndex % config.fps === 0,
-		});
+			await videoSource.add(timestampSeconds, frameDuration, {
+				keyFrame: frameIndex % config.fps === 0,
+			});
 
-		onProgress((frameIndex + 1) / totalFrames);
+			onProgress((frameIndex + 1) / totalFrames);
+		}
+	} finally {
+		await pauseAnimationAfterExport();
 	}
 
 	videoSource.close();
@@ -483,9 +583,9 @@ export function VideoExportOverlay() {
 									MP4 animation
 								</h2>
 								<p className="mt-1 text-xs leading-5 text-zinc-500">
-									Start the animation first, then export. This
-									captures the visible canvas layers into an
-									MP4.
+									Export starts from the beginning, records
+									for the selected duration, then pauses the
+									animation.
 								</p>
 							</div>
 
