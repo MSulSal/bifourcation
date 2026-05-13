@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Share2, Video, X } from "lucide-react";
+import { Download, Share2, X } from "lucide-react";
 
 type ExportAspect = "square" | "vertical" | "wide";
 type ExportQuality = "standard" | "high" | "ultra";
@@ -388,6 +388,22 @@ function getExportFilename({
 	return `bifourcation-${aspect}-${quality}-${duration}s-${timestamp}.mp4`;
 }
 
+function requestExportAudioTrack() {
+	let audioTrack: MediaStreamTrack | null = null;
+
+	window.dispatchEvent(
+		new CustomEvent("bifourcation:export-request-audio-track", {
+			detail: {
+				resolve: (track: MediaStreamTrack | null) => {
+					audioTrack = track;
+				},
+			},
+		}),
+	);
+
+	return audioTrack;
+}
+
 async function exportVisibleAnimationToMp4({
 	aspect,
 	quality,
@@ -408,8 +424,13 @@ async function exportVisibleAnimationToMp4({
 
 	await resetAnimationToBeginningForExport();
 
-	const { BufferTarget, CanvasSource, Mp4OutputFormat, Output } =
-		await loadMediabunny();
+	const {
+		BufferTarget,
+		CanvasSource,
+		MediaStreamAudioTrackSource,
+		Mp4OutputFormat,
+		Output,
+	} = await loadMediabunny();
 
 	const target = new BufferTarget();
 	const output = new Output({
@@ -424,6 +445,27 @@ async function exportVisibleAnimationToMp4({
 	});
 
 	output.addVideoTrack(videoSource);
+
+	const audioTrack = requestExportAudioTrack();
+	let audioSource: InstanceType<typeof MediaStreamAudioTrackSource> | null =
+		null;
+
+	if (audioTrack) {
+		audioSource = new MediaStreamAudioTrackSource(
+			audioTrack as ConstructorParameters<
+				typeof MediaStreamAudioTrackSource
+			>[0],
+			{
+				codec: "aac",
+				bitrate: 128_000,
+			},
+		);
+		audioSource.errorPromise.catch(() => {
+			// Export will still succeed with video if audio capture errors.
+		});
+		output.addAudioTrack(audioSource);
+	}
+
 	output.setMetadataTags({
 		title: "Bifourcation animation",
 		artist: "Bifourcation",
@@ -460,6 +502,7 @@ async function exportVisibleAnimationToMp4({
 	}
 
 	videoSource.close();
+	audioSource?.close();
 	await output.finalize();
 
 	if (!target.buffer) {
@@ -501,6 +544,21 @@ export function VideoExportOverlay() {
 	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.duration, String(duration));
 	}, [duration]);
+
+	useEffect(() => {
+		function openPanel() {
+			setIsOpen(true);
+		}
+
+		window.addEventListener("bifourcation:open-video-export", openPanel);
+
+		return () => {
+			window.removeEventListener(
+				"bifourcation:open-video-export",
+				openPanel,
+			);
+		};
+	}, []);
 
 	async function runExport() {
 		setError(null);
@@ -556,18 +614,8 @@ export function VideoExportOverlay() {
 
 	return (
 		<>
-			<button
-				className="fixed bottom-3 left-3 z-[70] flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/80 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900"
-				type="button"
-				onClick={() => setIsOpen(value => !value)}
-				aria-label="Open video export"
-				title="Export MP4"
-			>
-				<Video className="h-5 w-5" aria-hidden="true" />
-			</button>
-
 			{isOpen && (
-				<section className="fixed bottom-16 left-3 z-[80] w-[min(24rem,calc(100vw-1.5rem))] rounded-3xl border border-zinc-700/80 bg-zinc-950/95 p-4 text-zinc-100 shadow-2xl">
+				<section className="fixed bottom-16 right-3 z-[80] w-[min(24rem,calc(100vw-1.5rem))] rounded-3xl border border-zinc-700/80 bg-zinc-950/95 p-4 text-zinc-100 shadow-2xl">
 						<div className="mb-4 flex items-start justify-between gap-3">
 							<div>
 								<p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">

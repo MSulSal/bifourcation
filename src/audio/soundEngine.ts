@@ -353,6 +353,7 @@ function createSoftLimiterCurve(samples = 2048) {
 export class DrawingSoundEngine {
 	private context: AudioContext | null = null;
 	private masterGain: GainNode | null = null;
+	private captureDestination: MediaStreamAudioDestinationNode | null = null;
 	private states = new Map<string, StrokeSoundState>();
 	private frameCounter = 0;
 	private isRunning = false;
@@ -430,6 +431,12 @@ export class DrawingSoundEngine {
 		for (const state of this.states.values()) {
 			state.needsInitialNote = true;
 		}
+	}
+
+	getCaptureAudioTrack() {
+		this.ensureContext();
+
+		return this.captureDestination?.stream.getAudioTracks()[0] ?? null;
 	}
 
 	updateFromRotorFrame(frame: RotorSoundFrame) {
@@ -535,6 +542,10 @@ export class DrawingSoundEngine {
 		const masterFilter = context.createBiquadFilter();
 		const compressor = context.createDynamicsCompressor();
 		const limiter = context.createWaveShaper();
+		const captureDestination =
+			typeof context.createMediaStreamDestination === "function"
+				? context.createMediaStreamDestination()
+				: null;
 
 		masterGain.gain.value = 0.0001;
 
@@ -556,8 +567,13 @@ export class DrawingSoundEngine {
 		compressor.connect(limiter);
 		limiter.connect(context.destination);
 
+		if (captureDestination) {
+			limiter.connect(captureDestination);
+		}
+
 		this.context = context;
 		this.masterGain = masterGain;
+		this.captureDestination = captureDestination;
 
 		return context;
 	}

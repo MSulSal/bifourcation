@@ -1272,6 +1272,12 @@ function App() {
 		downloadBlob(blob, "bifourcation-snapshot.png");
 	}
 
+	function openVideoExportPanel() {
+		setIsSnapshotMenuOpen(false);
+		setIsVolumeDrawerOpen(false);
+		window.dispatchEvent(new CustomEvent("bifourcation:open-video-export"));
+	}
+
 	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.penColor, penColor);
 	}, [penColor]);
@@ -1425,6 +1431,48 @@ function App() {
 		hasAudibleVolume,
 		soundVolume,
 	]);
+
+	useEffect(() => {
+		function handleExportAudioTrackRequest(event: Event) {
+			const detail = (
+				event as CustomEvent<{
+					resolve?: (track: MediaStreamTrack | null) => void;
+				}>
+			).detail;
+			const resolve = detail?.resolve;
+
+			if (typeof resolve !== "function") return;
+
+			if (!hasAudibleVolume) {
+				resolve(null);
+				return;
+			}
+
+			try {
+				const engine = getSoundEngine();
+				engine.setVolume(soundVolume);
+				void engine.enable().catch(error => {
+					console.error("Unable to enable audio context for export.", error);
+				});
+				resolve(engine.getCaptureAudioTrack());
+			} catch (error) {
+				console.error("Unable to provide audio track for export.", error);
+				resolve(null);
+			}
+		}
+
+		window.addEventListener(
+			"bifourcation:export-request-audio-track",
+			handleExportAudioTrackRequest,
+		);
+
+		return () => {
+			window.removeEventListener(
+				"bifourcation:export-request-audio-track",
+				handleExportAudioTrackRequest,
+			);
+		};
+	}, [hasAudibleVolume, soundVolume]);
 
 	useEffect(() => {
 		function handleExportAnimationControl(event: Event) {
@@ -2389,6 +2437,13 @@ function App() {
 						<div className="absolute bottom-16 right-3 z-30 w-44 overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/80 shadow-lg backdrop-blur">
 							<button
 								className="block w-full px-4 py-3 text-left text-sm font-medium text-zinc-100 transition hover:bg-zinc-800/80"
+								onClick={openVideoExportPanel}
+							>
+								Export MP4
+							</button>
+
+							<button
+								className="block w-full border-t border-zinc-800 px-4 py-3 text-left text-sm font-medium text-zinc-100 transition hover:bg-zinc-800/80"
 								onClick={shareSnapshot}
 							>
 								Share snapshot
