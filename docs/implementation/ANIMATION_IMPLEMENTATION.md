@@ -15,7 +15,7 @@ preserve completed Fourier-drawn strokes
 support different animation timing modes
 ```
 
-It also coordinates drawing mode, pause behavior, snapshots, the rotor view selector, the settings drawer, shape placement, history changes, and sound timing.
+It also coordinates drawing mode, pause behavior, snapshots, the rotor view selector, floating control drawers, shape placement, history changes, and sound timing.
 
 The most important current rule is:
 
@@ -722,7 +722,7 @@ A placed shape becomes a normal `Stroke`.
 The placement flow is:
 
 ```txt
-select shape in gear drawer
+open shape drawer and select shape
 press canvas to anchor
 drag to scale and rotate
 release to finalize
@@ -998,46 +998,54 @@ If animation is currently active, the snapshot captures the current frame and th
 
 ---
 
-## Settings drawer
+## Control surfaces
 
 The UI originally had too much control clutter around the canvas.
 
-The final layout moves secondary controls into a right-side translucent drawer.
-
-The drawer is opened with a gear icon because it now contains general tools and settings, not just color controls.
-
-The drawer contains:
+The current layout uses compact floating controls and right-side drawers:
 
 ```txt
-history controls
-animation mode selector
-shape tools
-color palette
-pen width
-image import
-rotor-plane explanation
+right-side buttons:
+  rotor drawer
+  shape drawer
+  color drawer
+  stroke-width drawer
+  animation style toggle
+
+bottom-right buttons:
+  volume drawer
+  image import
+  snapshot menu
 ```
 
-Only primary controls remain at the bottom.
+Drawers open to the left of their trigger buttons, and tap-away closes any open drawer.
 
-The canvas also shows metrics as faint top text instead of large cards, so drawing space remains usable.
+Primary mode actions remain in the bottom bar:
+
+```txt
+Draw
+Edit
+Fill
+Animate / Pause
+Clear
+```
+
+Undo and redo are always visible as floating controls above the bottom bar.
+
+The canvas metrics stay as faint top text so drawing space remains usable.
 
 ---
 
-## Animation mode selector
+## Animation mode toggle
 
-The drawer includes the animation mode selector:
+Animation mode is now changed by a single icon toggle (instead of two text buttons):
 
 ```txt
-Sequential
-Together
+ArrowDown01 icon        = Sequential
+ArrowDownFromLine icon  = Together
 ```
 
-Sequential is the classic stroke-by-stroke reconstruction.
-
-Together starts all strokes at the same time.
-
-This selector changes the orchestration of the animation, but it does not change the Fourier terms.
+The toggle changes orchestration only. It does not change Fourier terms.
 
 The same strokes and terms are used in both modes.
 
@@ -1116,7 +1124,8 @@ The same mathematical reconstruction can be shown in multiple visual languages.
 The current animation pipeline is:
 
 ```txt
-Stroke[]
+DrawingObject[]
+→ drawable Stroke[] (freehand + shape)
 → resample each stroke by arc length
 → compute Fourier terms for each stroke
 → AnimatedStroke[]
@@ -1149,15 +1158,18 @@ The current animation system supports:
 ```txt
 freehand strokes
 shape strokes
+bucket-fill visual layers
 image-traced strokes
 undo / redo-safe drawing state
 path-length-based timing
 Sequential mode
 Together mode
+single-toggle animation-style switching
 completed Fourier trace caching
 Disk / Blade / Companion rotor views
 tiny rotor labels
 snapshot capture
+MP4 export synchronization hooks
 sound synchronization
 ```
 

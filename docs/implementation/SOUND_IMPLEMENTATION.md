@@ -163,8 +163,10 @@ The sound preference can be saved locally, but actual audio start may still requ
 The final behavior is:
 
 ```txt
-speaker button toggles sound preference
-animation starts sound only if sound is enabled
+speaker button opens volume drawer
+volume = 0 behaves as muted
+volume > 0 behaves as enabled
+animation starts sound only if audible volume is present
 pause stops or fades sound
 clear resets sound
 ```
@@ -178,7 +180,8 @@ This keeps the app aligned with browser rules.
 The sound system needs to know:
 
 ```txt
-is sound enabled?
+is sound volume above zero?
+is compatibility enabled flag true?
 is animation active?
 is animation playing?
 which strokes exist?
@@ -874,27 +877,36 @@ Too low becomes muddy.
 
 Too high becomes mosquito-like.
 
-A practical range is roughly:
+A practical range is constrained to avoid mud and harshness. In the current mapping:
 
 ```txt
-180 Hz → 1200 Hz
+C2 → C7 on larger screens
+C2 → C5 on smaller screens
 ```
 
-with most activity below the harsh upper range.
+with most activity centered well below the harsh top edge.
 
 The app uses a musical scale instead of raw frequency mapping.
 
-The current scale model is a pentatonic scale:
+The current scale model uses a diatonic solfege-style interval set:
 
 ```ts
-const ROOT_MIDI = 50; // D3
-const SCALE = [0, 2, 4, 7, 9]; // D major pentatonic
-const OCTAVE_COUNT = 4;
+const SOLFEGE_INTERVALS = [0, 2, 4, 5, 7, 9, 11, 12];
 ```
 
 A sampled path point becomes a scale step, and that scale step becomes MIDI, then Hz.
 
 This keeps the sound musical even when the drawing is irregular.
+
+On smaller screens, the octave spread is intentionally reduced and tied to shape coverage:
+
+```txt
+3 mobile octaves total
+coverage > 75% of screen area  → lowest octave emphasis
+coverage < 20% of screen area  → highest octave emphasis
+```
+
+This keeps mobile output calmer and less jumpy when finger-drawn strokes vary in size.
 
 ---
 
@@ -1360,7 +1372,8 @@ That keeps the snapshot action from feeling like the app keeps performing after 
 The app persists the sound preference:
 
 ```txt
-sound on/off preference
+sound volume value
+compatibility soundEnabled flag (derived from volume > 0)
 ```
 
 This does not mean audio will autoplay on page load.
@@ -1370,7 +1383,7 @@ It means:
 ```txt
 when the user next animates,
 and browser rules allow sound,
-the app remembers whether sound was enabled
+the app remembers the previous volume/mute intent
 ```
 
 Browser autoplay restrictions still apply.

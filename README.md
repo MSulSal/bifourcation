@@ -21,22 +21,23 @@ Fourier terms advanced by rotors in the e₁e₂ plane.
 ## What it does
 
 - Draw freehand strokes on a canvas.
-- Add geometric shape strokes with placement, scaling, and rotation.
+- Add geometric shape objects with placement, scaling, and rotation.
+- Flood-fill bounded regions on the canvas.
 - Import images and trace their visible edges into drawable strokes.
-- Undo and redo drawing actions.
-- Choose stroke color and pen width.
-- Convert every stroke into an evenly sampled path.
-- Compute Fourier terms for each stroke.
-- Animate strokes as rotor-driven Fourier reconstructions.
-- Choose between Sequential and Together animation modes.
-- Use path-length-based animation timing so equal traced distance takes equal time.
-- Preserve completed stroke reconstructions while later strokes animate.
-- Visualize Fourier components as rotor-driven disks, oriented blades, or companion vectors.
-- Show tiny rotor labels so the animation keeps pointing back to the math.
-- Generate optional path-driven sound from the drawing.
-- Sync sound timing with the selected animation mode.
+- Undo and redo committed actions.
+- Edit selected objects with copy, paste, duplicate, flip, and delete actions.
+- Choose stroke color and stroke width.
+- Convert drawable geometry into evenly sampled paths.
+- Compute Fourier terms for each drawable stroke.
+- Animate reconstructions in Sequential or Together mode.
+- Use path-length timing so equal traced distance takes equal time.
+- Preserve completed Fourier traces while later strokes animate.
+- Visualize components as rotor-driven disks, blades, or companion vectors.
+- Generate optional path-driven sound from the same animation state.
+- Control volume from a compact floating volume drawer.
+- Capture PNG snapshots (share or download).
+- Export MP4 from the snapshot menu, with optional audio capture, quality presets, duration presets, cancel support, and storage checks.
 - Persist lightweight user preferences across refreshes.
-- Export or share snapshots of the current reconstruction.
 
 ## Why this exists
 
@@ -311,29 +312,30 @@ Bifourcation does not use the even subalgebra because vectors cannot be rotated 
 
 ## Drawing inputs
 
-Every source of geometry becomes the same internal object:
+Every source of geometry becomes a drawing object:
 
 ```ts
-type Stroke = {
-	color: string;
-	width: number;
-	points: Point[];
-};
+type DrawingObject =
+	| { type: "freehand"; id: string; stroke: Stroke }
+	| { type: "shape"; id: string; shape: ShapeObject }
+	| { type: "bucket-fill"; id: string; fill: BucketFillObject };
 ```
 
-That decision keeps the app coherent.
+The Fourier pipeline only consumes drawable stroke geometry, so freehand and shape objects are converted to `Stroke` values before resampling and DFT. Bucket fills remain visual-layer data.
 
 ```txt
 freehand drawing
 shape placement
+bucket fill
 image tracing
-→ Stroke[]
+→ DrawingObject[]
+→ drawable Stroke[]
 → resampled path
 → Fourier terms
 → rotor animation
 ```
 
-The Fourier system does not need to know where a stroke came from.
+This keeps input handling coherent while preserving special behaviors like fill rendering and object transforms.
 
 ### Freehand strokes
 
@@ -341,15 +343,18 @@ Freehand drawing records ordered pointer positions directly on the canvas. Each 
 
 ### Shape tools
 
-The gear drawer includes shape tools.
+Shape tools live in a dedicated floating shape drawer on the right side.
 
 The current shape tools are:
 
 ```txt
 line
-circle
+ellipse
 rectangle
-triangle
+parallelogram
+equilateral triangle
+isosceles triangle
+scalene triangle
 star
 spiral
 sine wave
@@ -686,6 +691,16 @@ animation mode → timing behavior
 
 Sound only plays while animation is active. Pausing animation stops the sound. Clearing the canvas stops and resets sound.
 
+The visible sound control is volume-first:
+
+```txt
+speaker button opens vertical volume drawer
+volume = 0 shows muted icon and disables playback
+volume > 0 shows volume icon and enables playback behavior
+```
+
+An internal enabled flag is still kept for compatibility, but active sound behavior is effectively driven by `soundVolume > 0`.
+
 The sound system follows the same animation timing idea as the visual reconstruction:
 
 ```txt
@@ -707,9 +722,16 @@ Currently persisted:
 
 - pen color
 - pen width
+- tool mode
+- selected shape
 - rotor/bivector view
 - animation trace mode
-- sound on/off preference
+- visible rotor term count
+- sound volume
+- compatibility sound enabled key (`true` when volume > 0)
+- export aspect preset
+- export quality preset
+- export duration preset
 
 Drawing data itself is not persisted. Refreshing the page keeps the user’s preferred tools, but it does not restore the canvas drawing.
 
@@ -781,9 +803,12 @@ src/
     soundEngine.ts
 
   components/
+    BucketFillCanvas.tsx
     DrawingCanvas.tsx
+    ObjectTransformCanvas.tsx
     RotorCanvas.tsx
     ShapePlacementCanvas.tsx
+    VideoExportOverlay.tsx
 
   image/
     edgeTracing.ts
@@ -801,10 +826,34 @@ src/
   App.tsx
   main.tsx
 
+docs/
+  implementation/
+    README.md
+    ANIMATION_IMPLEMENTATION.md
+    EDGE_DETECTION_IMPLEMENTATION.md
+    EXPORT_IMPLEMENTATION.md
+    FOURIER_IMPLEMENTATION.md
+    GEOMETRIC_ALGEBRA_IMPLEMENTATION.md
+    SOUND_IMPLEMENTATION.md
+    UI_SURFACES_IMPLEMENTATION.md
+
 public/
   bifourcation_logo.png
   bifourcation-snapshot.png
 ```
+
+## Implementation docs
+
+Detailed design and implementation notes live in [`docs/implementation`](docs/implementation):
+
+- [`README.md`](docs/implementation/README.md)
+- [`ANIMATION_IMPLEMENTATION.md`](docs/implementation/ANIMATION_IMPLEMENTATION.md)
+- [`EDGE_DETECTION_IMPLEMENTATION.md`](docs/implementation/EDGE_DETECTION_IMPLEMENTATION.md)
+- [`EXPORT_IMPLEMENTATION.md`](docs/implementation/EXPORT_IMPLEMENTATION.md)
+- [`FOURIER_IMPLEMENTATION.md`](docs/implementation/FOURIER_IMPLEMENTATION.md)
+- [`GEOMETRIC_ALGEBRA_IMPLEMENTATION.md`](docs/implementation/GEOMETRIC_ALGEBRA_IMPLEMENTATION.md)
+- [`SOUND_IMPLEMENTATION.md`](docs/implementation/SOUND_IMPLEMENTATION.md)
+- [`UI_SURFACES_IMPLEMENTATION.md`](docs/implementation/UI_SURFACES_IMPLEMENTATION.md)
 
 ## Math pipeline
 
@@ -920,6 +969,8 @@ Primary bottom controls:
 
 ```txt
 Draw
+Edit
+Fill
 Animate / Pause
 Clear canvas
 ```
@@ -927,25 +978,45 @@ Clear canvas
 Floating canvas controls:
 
 ```txt
-gear drawer
-sound toggle
+rotor drawer
+shape drawer
+color drawer
+stroke-width drawer
+animation style toggle
+volume drawer
+image import button
 snapshot menu
 animation view selector
 ```
 
-The gear drawer contains:
+Floating drawers are anchored to the right and open leftward so they do not cover their trigger buttons.
+
+Tap-away behavior:
 
 ```txt
-history controls
-animation mode selector
-shape tools
-color palette
-pen width
-image import
-rotor-plane explanation
+tap/click outside any open floating drawer closes it
+escape key also closes open drawers
 ```
 
-The gear icon is used because the drawer is now a general settings and tool surface, not just a color drawer.
+The selected-object action bar appears in edit mode and is mobile-friendly:
+
+```txt
+Duplicate
+Copy
+Paste
+Flip H
+Flip V
+Delete
+```
+
+Undo/redo are always available as floating buttons above the bottom bar.
+
+Animation style is controlled by a single right-side toggle:
+
+```txt
+ArrowDown01 icon = Sequential
+ArrowDownFromLine icon = Together (parallel)
+```
 
 ## Snapshot behavior
 
@@ -956,11 +1027,26 @@ If animation is playing, the app captures the current frame and then pauses.
 Snapshot options:
 
 ```txt
+Export MP4
 Share snapshot
 Download PNG
 ```
 
-The share option uses the browser share sheet when available and falls back to PNG download when sharing files is not supported.
+Export MP4 opens a floating export panel (not a full-screen modal) with:
+
+```txt
+format preset
+quality preset
+duration preset
+output summary
+progress
+cancel export
+share last export
+```
+
+MP4 export uses dynamic loading for the encoder package and can include captured app audio when volume is above zero.
+
+Both snapshot sharing and MP4 sharing use the browser share sheet when file sharing is supported, and fall back to download otherwise.
 
 ## Accuracy notes
 
