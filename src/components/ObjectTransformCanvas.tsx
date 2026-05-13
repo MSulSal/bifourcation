@@ -353,7 +353,7 @@ function getResizedShape(
 
 	let nextWidth = startBounds.width;
 	let nextHeight = startBounds.height;
-	let center = getShapeCenter(startShape);
+	let center: Point;
 	let flipX = startShape.flipX;
 	let flipY = startShape.flipY;
 

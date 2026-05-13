@@ -1,11 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download, Share2, Video, X } from "lucide-react";
-import {
-	BufferTarget,
-	CanvasSource,
-	Mp4OutputFormat,
-	Output,
-} from "mediabunny";
 
 type ExportAspect = "square" | "vertical" | "wide";
 type ExportQuality = "standard" | "high" | "ultra";
@@ -26,6 +20,14 @@ type CapturedCanvas = {
 	documentOrder: number;
 };
 
+type MediabunnyModule = typeof import("mediabunny");
+
+const STORAGE_KEYS = {
+	aspect: "bifourcation.export.aspect",
+	quality: "bifourcation.export.quality",
+	duration: "bifourcation.export.duration",
+} as const;
+
 const ASPECT_LABELS: Record<ExportAspect, string> = {
 	square: "Square",
 	vertical: "Vertical",
@@ -43,6 +45,48 @@ const QUALITY_HELP: Record<ExportQuality, string> = {
 	high: "Best default for social posting.",
 	ultra: "Sharper export, larger file.",
 };
+
+async function loadMediabunny(): Promise<MediabunnyModule> {
+	return await import("mediabunny");
+}
+
+function readStoredValue(key: string) {
+	try {
+		return window.localStorage.getItem(key);
+	} catch {
+		return null;
+	}
+}
+
+function writeStoredValue(key: string, value: string) {
+	try {
+		window.localStorage.setItem(key, value);
+	} catch {
+		// Ignore storage errors, for example private browsing restrictions.
+	}
+}
+
+function readStoredAspect(): ExportAspect {
+	const value = readStoredValue(STORAGE_KEYS.aspect);
+
+	return value === "square" || value === "vertical" || value === "wide"
+		? value
+		: "vertical";
+}
+
+function readStoredQuality(): ExportQuality {
+	const value = readStoredValue(STORAGE_KEYS.quality);
+
+	return value === "standard" || value === "high" || value === "ultra"
+		? value
+		: "high";
+}
+
+function readStoredDuration(): ExportDuration {
+	const value = Number(readStoredValue(STORAGE_KEYS.duration));
+
+	return value === 4 || value === 8 || value === 12 ? value : 8;
+}
 
 function getExportConfig(
 	aspect: ExportAspect,
@@ -364,6 +408,9 @@ async function exportVisibleAnimationToMp4({
 
 	await resetAnimationToBeginningForExport();
 
+	const { BufferTarget, CanvasSource, Mp4OutputFormat, Output } =
+		await loadMediabunny();
+
 	const target = new BufferTarget();
 	const output = new Output({
 		format: new Mp4OutputFormat(),
@@ -428,9 +475,10 @@ async function exportVisibleAnimationToMp4({
 
 export function VideoExportOverlay() {
 	const [isOpen, setIsOpen] = useState(false);
-	const [aspect, setAspect] = useState<ExportAspect>("vertical");
-	const [quality, setQuality] = useState<ExportQuality>("high");
-	const [duration, setDuration] = useState<ExportDuration>(8);
+	const [aspect, setAspect] = useState<ExportAspect>(readStoredAspect);
+	const [quality, setQuality] = useState<ExportQuality>(readStoredQuality);
+	const [duration, setDuration] =
+		useState<ExportDuration>(readStoredDuration);
 	const [isExporting, setIsExporting] = useState(false);
 	const [progress, setProgress] = useState(0);
 	const [error, setError] = useState<string | null>(null);
@@ -441,6 +489,18 @@ export function VideoExportOverlay() {
 		() => getExportConfig(aspect, quality),
 		[aspect, quality],
 	);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.aspect, aspect);
+	}, [aspect]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.quality, quality);
+	}, [quality]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.duration, String(duration));
+	}, [duration]);
 
 	async function runExport() {
 		setError(null);
@@ -497,9 +557,9 @@ export function VideoExportOverlay() {
 	return (
 		<>
 			<button
-				className="fixed bottom-3 left-3 z-70 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/80 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900"
+				className="fixed bottom-3 left-3 z-[70] flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/80 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900"
 				type="button"
-				onClick={() => setIsOpen(true)}
+				onClick={() => setIsOpen(value => !value)}
 				aria-label="Open video export"
 				title="Export MP4"
 			>
@@ -507,8 +567,7 @@ export function VideoExportOverlay() {
 			</button>
 
 			{isOpen && (
-				<div className="fixed inset-0 z-80 flex items-end justify-center bg-black/45 p-3 backdrop-blur-sm sm:items-center">
-					<section className="w-full max-w-md rounded-3xl border border-zinc-700/80 bg-zinc-950/95 p-4 text-zinc-100 shadow-2xl">
+				<section className="fixed bottom-16 left-3 z-[80] w-[min(24rem,calc(100vw-1.5rem))] rounded-3xl border border-zinc-700/80 bg-zinc-950/95 p-4 text-zinc-100 shadow-2xl">
 						<div className="mb-4 flex items-start justify-between gap-3">
 							<div>
 								<p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
@@ -714,7 +773,6 @@ export function VideoExportOverlay() {
 							</p>
 						</div>
 					</section>
-				</div>
 			)}
 		</>
 	);

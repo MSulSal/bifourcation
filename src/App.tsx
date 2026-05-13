@@ -14,6 +14,9 @@ import {
 	Settings,
 	Trash2,
 	Undo2,
+	Upload,
+	Volume2,
+	VolumeX,
 } from "lucide-react";
 import { DrawingSoundEngine, type RotorSoundFrame } from "./audio/soundEngine";
 import { BucketFillCanvas } from "./components/BucketFillCanvas";
@@ -99,6 +102,8 @@ const PASTE_OFFSET = 24;
 const STORAGE_KEYS = {
 	penColor: "bifourcation.penColor",
 	penWidth: "bifourcation.penWidth",
+	toolMode: "bifourcation.toolMode",
+	selectedShape: "bifourcation.selectedShape",
 	bivectorView: "bifourcation.bivectorView",
 	soundEnabled: "bifourcation.soundEnabled",
 	soundVolume: "bifourcation.soundVolume",
@@ -193,11 +198,23 @@ function isAnimationTraceMode(
 	return value === "sequential" || value === "simultaneous";
 }
 
+function isToolMode(value: string | null): value is ToolMode {
+	return value === "draw" || value === "edit" || value === "fill";
+}
+
 function readStoredValue(key: string) {
 	try {
 		return window.localStorage.getItem(key);
 	} catch {
 		return null;
+	}
+}
+
+function removeStoredValue(key: string) {
+	try {
+		window.localStorage.removeItem(key);
+	} catch {
+		// Ignore storage errors, for example private browsing restrictions.
 	}
 }
 
@@ -224,6 +241,22 @@ function readStoredPenWidth() {
 	return clampNumber(Math.round(storedWidth), 2, 16);
 }
 
+function readStoredToolMode(): ToolMode {
+	const storedToolMode = readStoredValue(STORAGE_KEYS.toolMode);
+
+	return isToolMode(storedToolMode) ? storedToolMode : "draw";
+}
+
+function readStoredSelectedShape(): ShapeKind | null {
+	const storedShape = readStoredValue(STORAGE_KEYS.selectedShape);
+
+	if (!storedShape) return null;
+
+	return SHAPE_TOOLS.includes(storedShape as ShapeKind)
+		? (storedShape as ShapeKind)
+		: null;
+}
+
 function readStoredVisibleTermCount() {
 	const storedTermCount = Number(
 		readStoredValue(STORAGE_KEYS.visibleTermCount),
@@ -246,10 +279,6 @@ function readStoredAnimationTraceMode(): AnimationTraceMode {
 	return isAnimationTraceMode(storedMode)
 		? storedMode
 		: DEFAULT_ANIMATION_TRACE_MODE;
-}
-
-function readStoredSoundEnabled() {
-	return readStoredValue(STORAGE_KEYS.soundEnabled) === "true";
 }
 
 function readStoredSoundVolume() {
@@ -511,6 +540,23 @@ function RotorCountIcon() {
 	);
 }
 
+function ShapeDrawerIcon() {
+	return (
+		<svg viewBox="0 0 32 32" aria-hidden="true" className="h-7 w-7">
+			<rect
+				x="7"
+				y="9"
+				width="18"
+				height="14"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.4"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
 function cloneDrawingObject(object: DrawingObject): DrawingObject | null {
 	if (object.type === "shape") {
 		const id = createId("shape");
@@ -560,11 +606,13 @@ function App() {
 		future: [],
 	});
 	const [mode, setMode] = useState<AppMode>("draw");
-	const [toolMode, setToolMode] = useState<ToolMode>("draw");
+	const [toolMode, setToolMode] = useState<ToolMode>(readStoredToolMode);
 	const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [isColorDrawerOpen, setIsColorDrawerOpen] = useState(false);
 	const [isRotorDrawerOpen, setIsRotorDrawerOpen] = useState(false);
+	const [isShapeDrawerOpen, setIsShapeDrawerOpen] = useState(false);
+	const [isVolumeDrawerOpen, setIsVolumeDrawerOpen] = useState(false);
 	const [isSnapshotMenuOpen, setIsSnapshotMenuOpen] = useState(false);
 	const [bivectorView, setBivectorView] = useState<BivectorView>(
 		readStoredBivectorView,
@@ -574,13 +622,15 @@ function App() {
 	const [visibleTermCount, setVisibleTermCount] = useState(
 		readStoredVisibleTermCount,
 	);
-	const [isSoundEnabled, setIsSoundEnabled] = useState(
-		readStoredSoundEnabled,
-	);
 	const [soundVolume, setSoundVolume] = useState(readStoredSoundVolume);
+	const [isSoundEnabled, setIsSoundEnabled] = useState(() => {
+		return readStoredSoundVolume() > 0;
+	});
 	const [isTracingImage, setIsTracingImage] = useState(false);
 	const [imageTraceError, setImageTraceError] = useState<string | null>(null);
-	const [selectedShape, setSelectedShape] = useState<ShapeKind | null>(null);
+	const [selectedShape, setSelectedShape] = useState<ShapeKind | null>(
+		readStoredSelectedShape,
+	);
 	const [selectedObjectId, setSelectedObjectId] = useState<string | null>(
 		null,
 	);
@@ -672,6 +722,10 @@ function App() {
 		mode === "draw" && toolMode === "draw" && selectedShape === null;
 	const canUndo = drawingHistory.past.length > 0;
 	const canRedo = drawingHistory.future.length > 0;
+	const hasAudibleVolume = soundVolume > 0;
+	const canDuplicateSelectedObject =
+		selectedObject?.type === "shape" || selectedObject?.type === "freehand";
+	const isSelectedObjectShape = selectedObject?.type === "shape";
 
 	function changePenColor(nextColor: string) {
 		const normalized = normalizeHexColor(nextColor);
@@ -679,6 +733,7 @@ function App() {
 		if (!normalized) return;
 
 		setPenColor(normalized);
+		setColorHexDraft(normalized);
 	}
 
 	function changeRgbComponent(component: keyof RgbColor, value: number) {
@@ -704,11 +759,21 @@ function App() {
 
 		setSoundVolume(normalizedVolume);
 		soundEngineRef.current?.setVolume(normalizedVolume);
+
+		if (normalizedVolume <= 0) {
+			setIsSoundEnabled(false);
+			soundEngineRef.current?.stop();
+			soundEngineRef.current?.resetClock();
+			return;
+		}
+
+		setIsSoundEnabled(true);
 	}
 
 	function handleRotorSoundFrame(frame: RotorSoundFrame) {
 		if (
 			!isSoundEnabled ||
+			!hasAudibleVolume ||
 			!isAnimationPlaying ||
 			!isAnimationMode ||
 			frame.strokes.length === 0
@@ -853,6 +918,15 @@ function App() {
 		pauseAnimationClock();
 	}
 
+	function selectShapeTool(kind: ShapeKind) {
+		setMode("draw");
+		setToolMode("draw");
+		setSelectedObjectId(null);
+		setContextMenu(null);
+		pauseAnimationClock();
+		setSelectedShape(current => (current === kind ? null : kind));
+	}
+
 	async function toggleAnimation() {
 		if (!hasAnimationData) return;
 
@@ -862,11 +936,12 @@ function App() {
 			soundEngineRef.current?.resetClock();
 		}
 
-		if (isStartingAnimation && isSoundEnabled) {
+		if (isStartingAnimation && hasAudibleVolume) {
 			try {
 				const engine = getSoundEngine();
 				engine.setVolume(soundVolume);
 				await engine.enable();
+				setIsSoundEnabled(true);
 			} catch (error) {
 				console.error("Unable to start audio engine.", error);
 				setIsSoundEnabled(false);
@@ -877,24 +952,6 @@ function App() {
 		setContextMenu(null);
 		setMode("animate");
 		setIsAnimationPlaying(value => !value);
-	}
-
-	async function toggleSound() {
-		if (isSoundEnabled) {
-			setIsSoundEnabled(false);
-			soundEngineRef.current?.stop();
-			return;
-		}
-
-		try {
-			const engine = getSoundEngine();
-			engine.setVolume(soundVolume);
-			await engine.enable();
-			setIsSoundEnabled(true);
-		} catch (error) {
-			console.error("Unable to start audio engine.", error);
-			setIsSoundEnabled(false);
-		}
 	}
 
 	function changeAnimationTraceMode(nextMode: AnimationTraceMode) {
@@ -1022,6 +1079,23 @@ function App() {
 		if (!selectedObject) return;
 
 		setClipboardObject(selectedObject);
+		setContextMenu(null);
+	}
+
+	function duplicateSelectedObject() {
+		if (!selectedObject) return;
+
+		const nextObject = cloneDrawingObject(selectedObject);
+		if (!nextObject) return;
+
+		commitObjects(currentObjects => [...currentObjects, nextObject]);
+
+		if (nextObject.type === "shape") {
+			setSelectedObjectId(nextObject.id);
+			setMode("draw");
+			setToolMode("edit");
+		}
+
 		setContextMenu(null);
 	}
 
@@ -1200,12 +1274,24 @@ function App() {
 
 	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.penColor, penColor);
-		setColorHexDraft(penColor);
 	}, [penColor]);
 
 	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.penWidth, String(penWidth));
 	}, [penWidth]);
+
+	useEffect(() => {
+		writeStoredValue(STORAGE_KEYS.toolMode, toolMode);
+	}, [toolMode]);
+
+	useEffect(() => {
+		if (!selectedShape) {
+			removeStoredValue(STORAGE_KEYS.selectedShape);
+			return;
+		}
+
+		writeStoredValue(STORAGE_KEYS.selectedShape, selectedShape);
+	}, [selectedShape]);
 
 	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.bivectorView, bivectorView);
@@ -1223,11 +1309,8 @@ function App() {
 	}, [effectiveVisibleTermCount]);
 
 	useEffect(() => {
-		writeStoredValue(STORAGE_KEYS.soundEnabled, String(isSoundEnabled));
-	}, [isSoundEnabled]);
-
-	useEffect(() => {
 		writeStoredValue(STORAGE_KEYS.soundVolume, String(soundVolume));
+		writeStoredValue(STORAGE_KEYS.soundEnabled, String(soundVolume > 0));
 		soundEngineRef.current?.setVolume(soundVolume);
 	}, [soundVolume]);
 
@@ -1281,8 +1364,12 @@ function App() {
 				setSelectedObjectId(null);
 				setToolMode("draw");
 				setContextMenu(null);
+				setIsDrawerOpen(false);
 				setIsColorDrawerOpen(false);
 				setIsRotorDrawerOpen(false);
+				setIsShapeDrawerOpen(false);
+				setIsVolumeDrawerOpen(false);
+				setIsSnapshotMenuOpen(false);
 			}
 		}
 
@@ -1305,6 +1392,7 @@ function App() {
 		const engine = soundEngineRef.current;
 		const shouldRunSound =
 			isSoundEnabled &&
+			hasAudibleVolume &&
 			isAnimationPlaying &&
 			isAnimationMode &&
 			hasAnimationData;
@@ -1334,6 +1422,7 @@ function App() {
 		isAnimationPlaying,
 		isAnimationMode,
 		hasAnimationData,
+		hasAudibleVolume,
 		soundVolume,
 	]);
 
@@ -1364,7 +1453,7 @@ function App() {
 				setMode("animate");
 				setIsAnimationPlaying(true);
 
-				if (isSoundEnabled) {
+				if (hasAudibleVolume && isSoundEnabled) {
 					void getSoundEngine().start();
 				}
 
@@ -1389,7 +1478,7 @@ function App() {
 				handleExportAnimationControl,
 			);
 		};
-	}, [hasAnimationData, isSoundEnabled]);
+	}, [hasAnimationData, hasAudibleVolume, isSoundEnabled]);
 
 	return (
 		<main className="flex h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-50">
@@ -1489,6 +1578,14 @@ function App() {
 						onSoundFrame={handleRotorSoundFrame}
 					/>
 
+					<input
+						ref={imageInputRef}
+						className="hidden"
+						type="file"
+						accept="image/*"
+						onChange={handleImageUpload}
+					/>
+
 					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-wrap gap-2 text-[11px] font-medium text-zinc-100/45 sm:text-xs">
 						<span>{drawingObjects.length} objects</span>
 						<span>·</span>
@@ -1555,6 +1652,64 @@ function App() {
 						</div>
 					)}
 
+					{mode === "draw" && toolMode === "edit" && selectedObject && (
+						<div className="absolute bottom-20 left-1/2 z-30 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 gap-2 overflow-x-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/80 p-2 shadow-lg backdrop-blur">
+							<button
+								className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+								onClick={duplicateSelectedObject}
+								disabled={!canDuplicateSelectedObject}
+							>
+								Duplicate
+							</button>
+
+							<button
+								className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+								onClick={copySelectedObject}
+								disabled={!selectedObject}
+							>
+								Copy
+							</button>
+
+							<button
+								className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+								onClick={pasteCopiedObject}
+								disabled={!clipboardObject}
+							>
+								Paste
+							</button>
+
+							<button
+								className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+								onClick={() =>
+									commitSelectedShapeUpdate(
+										flipShapeHorizontal,
+									)
+								}
+								disabled={!isSelectedObjectShape}
+							>
+								Flip H
+							</button>
+
+							<button
+								className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+								onClick={() =>
+									commitSelectedShapeUpdate(flipShapeVertical)
+								}
+								disabled={!isSelectedObjectShape}
+							>
+								Flip V
+							</button>
+
+							<button
+								className="shrink-0 rounded-xl border border-red-900/70 px-3 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+								onClick={deleteSelectedObject}
+								disabled={!selectedObject}
+							>
+								Delete
+							</button>
+						</div>
+					)}
+
 					{isAnimationMode && (
 						<div className="absolute bottom-3 left-3 z-30 flex overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-1 text-xs font-semibold shadow-lg backdrop-blur">
 							{(["blade", "disk", "companion"] as const).map(
@@ -1582,6 +1737,8 @@ function App() {
 							setIsDrawerOpen(value => !value);
 							setIsColorDrawerOpen(false);
 							setIsRotorDrawerOpen(false);
+							setIsShapeDrawerOpen(false);
+							setIsVolumeDrawerOpen(false);
 						}}
 						aria-label={
 							isDrawerOpen
@@ -1599,11 +1756,13 @@ function App() {
 					</button>
 
 					<button
-						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						className="absolute right-3 top-[10.5rem] z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
 						onClick={() => {
 							setIsColorDrawerOpen(value => !value);
 							setIsDrawerOpen(false);
 							setIsRotorDrawerOpen(false);
+							setIsShapeDrawerOpen(false);
+							setIsVolumeDrawerOpen(false);
 						}}
 						aria-label={
 							isColorDrawerOpen
@@ -1624,6 +1783,8 @@ function App() {
 							setIsRotorDrawerOpen(value => !value);
 							setIsDrawerOpen(false);
 							setIsColorDrawerOpen(false);
+							setIsShapeDrawerOpen(false);
+							setIsVolumeDrawerOpen(false);
 						}}
 						aria-label={
 							isRotorDrawerOpen
@@ -1633,6 +1794,25 @@ function App() {
 						title="Fourier rotors"
 					>
 						<RotorCountIcon />
+					</button>
+
+					<button
+						className="absolute right-3 top-16 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90"
+						onClick={() => {
+							setIsShapeDrawerOpen(value => !value);
+							setIsDrawerOpen(false);
+							setIsColorDrawerOpen(false);
+							setIsRotorDrawerOpen(false);
+							setIsVolumeDrawerOpen(false);
+						}}
+						aria-label={
+							isShapeDrawerOpen
+								? "Close shape drawer"
+								: "Open shape drawer"
+						}
+						title="Shapes"
+					>
+						<ShapeDrawerIcon />
 					</button>
 
 					{contextMenu && (
@@ -1672,7 +1852,7 @@ function App() {
 
 					<div
 						className={[
-							"absolute right-3 top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-1.5rem)] max-w-72 overflow-y-auto transition-all duration-200 sm:w-72",
+							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-72 overflow-y-auto transition-all duration-200",
 							isDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -1741,181 +1921,6 @@ function App() {
 							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
 								<div className="mb-3 flex items-center justify-between">
 									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Sound
-									</p>
-
-									<span className="text-sm font-medium text-zinc-200">
-										{Math.round(soundVolume * 100)}%
-									</span>
-								</div>
-
-								<input
-									className="w-full accent-zinc-50"
-									type="range"
-									min={0}
-									max={100}
-									step={1}
-									value={Math.round(soundVolume * 100)}
-									onChange={event =>
-										changeSoundVolume(
-											Number(event.target.value) / 100,
-										)
-									}
-								/>
-
-								<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
-									<span>Silent</span>
-									<span>Max</span>
-								</div>
-							</section>
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Tools
-								</p>
-
-								<div className="grid grid-cols-3 gap-2">
-									<button
-										className={[
-											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
-											toolMode === "draw"
-												? "border-zinc-50 bg-zinc-50 text-zinc-950"
-												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-										].join(" ")}
-										onClick={enterDrawMode}
-										aria-label="Draw"
-										title="Draw"
-									>
-										<Pencil size={18} />
-									</button>
-
-									<button
-										className={[
-											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
-											toolMode === "edit"
-												? "border-zinc-50 bg-zinc-50 text-zinc-950"
-												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-										].join(" ")}
-										onClick={enterEditMode}
-										aria-label="Edit shapes"
-										title="Edit shapes"
-									>
-										<SelectionIcon />
-									</button>
-
-									<button
-										className={[
-											"flex items-center justify-center rounded-xl border px-3 py-3 text-sm font-semibold transition",
-											toolMode === "fill"
-												? "border-zinc-50 bg-zinc-50 text-zinc-950"
-												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-										].join(" ")}
-										onClick={enterFillMode}
-										aria-label="Bucket fill"
-										title="Bucket fill"
-									>
-										<BucketIcon />
-									</button>
-								</div>
-							</section>
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<div className="mb-3 flex items-center justify-between gap-3">
-									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Shapes
-									</p>
-
-									{selectedShape && (
-										<button
-											className="text-xs font-semibold text-zinc-300 transition hover:text-zinc-50"
-											onClick={() =>
-												setSelectedShape(null)
-											}
-										>
-											Freehand
-										</button>
-									)}
-								</div>
-
-								<div className="grid grid-cols-5 gap-2">
-									{SHAPE_TOOLS.map(kind => (
-										<button
-											key={kind}
-											className={[
-												"flex aspect-square items-center justify-center rounded-xl border transition",
-												selectedShape === kind &&
-												toolMode === "draw"
-													? "border-zinc-50 bg-zinc-50 text-zinc-950"
-													: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
-											].join(" ")}
-											onClick={() => {
-												setMode("draw");
-												setToolMode("draw");
-												setIsAnimationPlaying(false);
-												setSelectedObjectId(null);
-												setSelectedShape(current =>
-													current === kind
-														? null
-														: kind,
-												);
-											}}
-											aria-label={`Select ${getShapeLabel(kind)} tool`}
-											title={getShapeLabel(kind)}
-										>
-											<ShapeIcon kind={kind} />
-										</button>
-									))}
-								</div>
-							</section>
-
-							{selectedShapeObject && (
-								<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-									<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-										Selected shape
-									</p>
-
-									<p className="mb-3 text-sm font-semibold text-zinc-100">
-										{getShapeLabel(
-											selectedShapeObject.kind,
-										)}
-									</p>
-
-									<div className="grid grid-cols-2 gap-2">
-										<button
-											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
-											onClick={() =>
-												commitSelectedShapeUpdate(
-													flipShapeHorizontal,
-												)
-											}
-										>
-											Flip H
-										</button>
-
-										<button
-											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
-											onClick={() =>
-												commitSelectedShapeUpdate(
-													flipShapeVertical,
-												)
-											}
-										>
-											Flip V
-										</button>
-
-										<button
-											className="col-span-2 rounded-xl border border-red-900/70 px-3 py-3 text-sm font-semibold text-red-200 transition hover:bg-red-950/50"
-											onClick={deleteSelectedObject}
-										>
-											Delete
-										</button>
-									</div>
-								</section>
-							)}
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<div className="mb-3 flex items-center justify-between">
-									<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
 										Stroke width
 									</p>
 
@@ -1942,78 +1947,12 @@ function App() {
 								</p>
 							</section>
 
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Image
-								</p>
-
-								<input
-									ref={imageInputRef}
-									className="hidden"
-									type="file"
-									accept="image/*"
-									onChange={handleImageUpload}
-								/>
-
-								<button
-									className="w-full rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-									onClick={() =>
-										imageInputRef.current?.click()
-									}
-									disabled={isTracingImage}
-								>
-									{isTracingImage
-										? "Tracing edges..."
-										: "Import image"}
-								</button>
-
-								{imageTraceError && (
-									<p className="mt-3 text-xs leading-5 text-red-300">
-										{imageTraceError}
-									</p>
-								)}
-							</section>
-
-							<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 text-sm text-zinc-300 shadow-lg backdrop-blur">
-								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-									Rotor plane
-								</p>
-
-								<div className="space-y-2 leading-5 text-zinc-400">
-									<p>
-										<span className="text-zinc-100">
-											e₁
-										</span>{" "}
-										is horizontal.
-										<br />
-										<span className="text-zinc-100">
-											e₂
-										</span>{" "}
-										is vertical.
-									</p>
-
-									<p>
-										<span className="text-zinc-100">
-											e₁e₂
-										</span>{" "}
-										is the oriented drawing plane.
-									</p>
-
-									<p className="font-mono text-[11px] leading-5 text-zinc-300">
-										Rₖ(t) = cos(2πkt) + e₁e₂sin(2πkt)
-									</p>
-
-									<p className="font-mono text-[11px] leading-5 text-zinc-300">
-										termₖ = cₖRₖ(t)
-									</p>
-								</div>
-							</section>
 						</div>
 					</div>
 
 					<div
 						className={[
-							"absolute left-3 right-3 top-[10.25rem] z-40 max-h-[calc(100%-11rem)] overflow-y-auto transition-all duration-200 sm:left-auto sm:w-80",
+							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-80 overflow-y-auto transition-all duration-200",
 							isColorDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -2158,7 +2097,96 @@ function App() {
 
 					<div
 						className={[
-							"absolute left-3 right-3 top-[10.25rem] z-40 max-h-[calc(100%-11rem)] overflow-y-auto transition-all duration-200 sm:left-auto sm:w-80",
+							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-80 overflow-y-auto transition-all duration-200",
+							isShapeDrawerOpen
+								? "translate-x-0 opacity-100"
+								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
+						].join(" ")}
+					>
+						<section className="rounded-2xl border border-zinc-700/70 bg-zinc-950/80 p-3 shadow-lg backdrop-blur">
+							<div className="mb-3 flex items-center justify-between gap-3">
+								<p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Shapes
+								</p>
+
+								{selectedShape && (
+									<button
+										className="text-xs font-semibold text-zinc-300 transition hover:text-zinc-50"
+										onClick={() => setSelectedShape(null)}
+									>
+										Freehand
+									</button>
+								)}
+							</div>
+
+							<div className="grid grid-cols-5 gap-2">
+								{SHAPE_TOOLS.map(kind => (
+									<button
+										key={kind}
+										className={[
+											"flex aspect-square items-center justify-center rounded-xl border transition",
+											selectedShape === kind &&
+											toolMode === "draw"
+												? "border-zinc-50 bg-zinc-50 text-zinc-950"
+												: "border-zinc-700 text-zinc-100 hover:bg-zinc-800",
+										].join(" ")}
+										onClick={() => selectShapeTool(kind)}
+										aria-label={`Select ${getShapeLabel(kind)} tool`}
+										title={getShapeLabel(kind)}
+									>
+										<ShapeIcon kind={kind} />
+									</button>
+								))}
+							</div>
+
+							{selectedShapeObject && (
+								<section className="mt-3 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3">
+									<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+										Selected shape
+									</p>
+
+									<p className="mb-3 text-sm font-semibold text-zinc-100">
+										{getShapeLabel(selectedShapeObject.kind)}
+									</p>
+
+									<div className="grid grid-cols-2 gap-2">
+										<button
+											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
+											onClick={() =>
+												commitSelectedShapeUpdate(
+													flipShapeHorizontal,
+												)
+											}
+										>
+											Flip H
+										</button>
+
+										<button
+											className="rounded-xl border border-zinc-700 px-3 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800"
+											onClick={() =>
+												commitSelectedShapeUpdate(
+													flipShapeVertical,
+												)
+											}
+										>
+											Flip V
+										</button>
+
+										<button
+											className="col-span-2 rounded-xl border border-red-900/70 px-3 py-3 text-sm font-semibold text-red-200 transition hover:bg-red-950/50"
+											onClick={deleteSelectedObject}
+										>
+											Delete
+										</button>
+									</div>
+								</section>
+							)}
+						</section>
+					</div>
+
+					<div
+						className={[
+							"absolute right-[4.5rem] top-[10.25rem] z-40 max-h-[calc(100%-11rem)] w-[calc(100vw-6rem)] max-w-80 overflow-y-auto transition-all duration-200",
 							isRotorDrawerOpen
 								? "translate-x-0 opacity-100"
 								: "pointer-events-none translate-x-[calc(100%+1rem)] opacity-0",
@@ -2226,48 +2254,118 @@ function App() {
 								sharper detail. Sound uses the same visible
 								rotors.
 							</p>
+
+							<section className="mt-4 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-3 text-sm text-zinc-300">
+								<p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+									Rotor plane
+								</p>
+
+								<div className="space-y-2 leading-5 text-zinc-400">
+									<p>
+										<span className="text-zinc-100">
+											e₁
+										</span>{" "}
+										is horizontal.
+										<br />
+										<span className="text-zinc-100">
+											e₂
+										</span>{" "}
+										is vertical.
+									</p>
+
+									<p>
+										<span className="text-zinc-100">
+											e₁e₂
+										</span>{" "}
+										is the oriented drawing plane.
+									</p>
+
+									<p className="font-mono text-[11px] leading-5 text-zinc-300">
+										Rₖ(t) = cos(2πkt) + e₁e₂sin(2πkt)
+									</p>
+
+									<p className="font-mono text-[11px] leading-5 text-zinc-300">
+										termₖ = cₖRₖ(t)
+									</p>
+								</div>
+							</section>
 						</section>
 					</div>
 
 					<button
 						className={[
-							"absolute bottom-3 right-16 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border shadow-lg backdrop-blur transition disabled:cursor-not-allowed disabled:opacity-40",
-							isSoundEnabled
+							"absolute bottom-3 right-[7.25rem] z-30 flex h-11 w-11 items-center justify-center rounded-2xl border shadow-lg backdrop-blur transition",
+							hasAudibleVolume
 								? "border-zinc-100 bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
 								: "border-zinc-700/70 bg-zinc-950/70 text-zinc-100 hover:bg-zinc-900/90",
 						].join(" ")}
-						onClick={toggleSound}
-						disabled={!hasAnimationData}
+						onClick={() => {
+							setIsVolumeDrawerOpen(value => !value);
+							setIsDrawerOpen(false);
+							setIsColorDrawerOpen(false);
+							setIsRotorDrawerOpen(false);
+							setIsShapeDrawerOpen(false);
+							setIsSnapshotMenuOpen(false);
+						}}
 						aria-label={
-							isSoundEnabled ? "Turn sound off" : "Turn sound on"
+							isVolumeDrawerOpen
+								? "Close volume drawer"
+								: "Open volume drawer"
 						}
-						title={isSoundEnabled ? "Sound on" : "Sound off"}
+						title="Volume"
 					>
-						<svg
-							aria-hidden="true"
-							viewBox="0 0 24 24"
-							className="h-5 w-5"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<path d="M4 9v6h4l5 4V5L8 9H4Z" />
-							{isSoundEnabled ? (
-								<>
-									<path d="M16 9.5a4 4 0 0 1 0 5" />
-									<path d="M18.5 7a7.5 7.5 0 0 1 0 10" />
-								</>
-							) : (
-								<path d="m17 9 4 4m0-4-4 4" />
-							)}
-						</svg>
+						{hasAudibleVolume ? (
+							<Volume2 size={18} />
+						) : (
+							<VolumeX size={18} />
+						)}
+					</button>
+
+					{isVolumeDrawerOpen && (
+						<div className="absolute bottom-16 right-[6.6rem] z-30 rounded-2xl border border-zinc-700/70 bg-zinc-950/80 px-3 py-3 shadow-lg backdrop-blur">
+							<div className="mb-2 text-center text-xs font-semibold text-zinc-200">
+								{Math.round(soundVolume * 100)}%
+							</div>
+
+							<div className="flex h-28 items-center justify-center">
+								<input
+									className="w-24 -rotate-90 accent-zinc-50"
+									type="range"
+									min={0}
+									max={100}
+									step={1}
+									value={Math.round(soundVolume * 100)}
+									onChange={event =>
+										changeSoundVolume(
+											Number(event.target.value) / 100,
+										)
+									}
+								/>
+							</div>
+
+							<div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+								<span>0</span>
+								<span>100</span>
+							</div>
+						</div>
+					)}
+
+					<button
+						className="absolute bottom-3 right-16 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
+						onClick={() => imageInputRef.current?.click()}
+						disabled={isTracingImage}
+						aria-label="Import image"
+						title="Import image"
+					>
+						<Upload size={18} />
 					</button>
 
 					<button
 						className="absolute bottom-3 right-3 z-30 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-700/70 bg-zinc-950/70 text-zinc-100 shadow-lg backdrop-blur transition hover:bg-zinc-900/90 disabled:cursor-not-allowed disabled:opacity-40"
-						onClick={() => setIsSnapshotMenuOpen(value => !value)}
+						onClick={() => {
+							setIsSnapshotMenuOpen(value => !value);
+							setIsVolumeDrawerOpen(false);
+						}}
 						disabled={drawingObjects.length === 0}
 						aria-label="Open snapshot menu"
 						title="Snapshot"
@@ -2303,6 +2401,12 @@ function App() {
 								Download PNG
 							</button>
 						</div>
+					)}
+
+					{imageTraceError && !isSnapshotMenuOpen && (
+						<p className="absolute bottom-16 right-3 z-30 max-w-72 rounded-xl border border-red-500/40 bg-red-950/60 px-3 py-2 text-xs leading-5 text-red-200 shadow-lg">
+							{imageTraceError}
+						</p>
 					)}
 				</section>
 
